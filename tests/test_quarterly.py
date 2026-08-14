@@ -35,3 +35,20 @@ def test_missing_op_returns_none():
     df = pd.DataFrame([{"account_id": "ifrs-full_Revenue",
                         "thstrm_amount": "1", "thstrm_add_amount": "1"}])
     assert quarterly.op_3m_from_df(df, "HALF") is None
+
+
+def test_annual_fallback_to_thstrm_when_add_missing():
+    # add 없음 -> 연간누적을 thstrm(100억)에서 취함, 3Q 누적 70억 -> Q4 = 30억
+    annual = _df("10,000,000,000", None)
+    prev_3q = _df("1,000,000,000", "7,000,000,000")
+    assert quarterly.op_3m_from_df(annual, "ANNUAL", prev_cum_df=prev_3q) == 30.0
+
+
+def test_annual_returns_none_when_no_prev_3q():
+    annual = _df("10,000,000,000", "10,000,000,000")
+    assert quarterly.op_3m_from_df(annual, "ANNUAL", prev_cum_df=None) is None
+
+
+def test_unknown_reprt_key_returns_none():
+    df = _df("1,000,000,000", "1,000,000,000")
+    assert quarterly.op_3m_from_df(df, "WEEKLY") is None
