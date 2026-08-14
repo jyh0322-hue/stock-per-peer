@@ -4,7 +4,57 @@
 # raise하지 않고 None을 반환해 UI의 교차검증 컬럼이 N/A로만 표시되도록 한다.
 from typing import List, Optional
 
-from app import config
+import pandas as pd
+
+from app import cache, config
+
+# KrxClient가 실제로 읽는 컬럼만 남겨서 캐시에 저장한다:
+# - ListingDate 등 JSON 직렬화 불가(Timestamp) 컬럼을 애초에 배제하고
+# - 캐시 파일 크기도 줄인다.
+_MARCAP_COLS = ["Code", "Symbol", "Name", "Marcap", "시가총액"]
+_LISTING_COLS = ["Code", "Symbol", "Name", "Market", "Sector", "Industry"]
+
+# 프로세스 내에서 KrxClient()가 여러 번 생성돼도(요청마다 새 인스턴스) 재파싱하지
+# 않도록 모듈 레벨에 DataFrame 자체를 메모이즈한다. cache.memoize는 day_key +
+# TTL로 디스크/메모리 캐시를 제공하지만, 그 결과(JSON records)를 매번
+# pd.DataFrame(records)로 재구성하는 비용까지는 없애주지 않으므로 별도로 둔다.
+_process_marcap_df = None
+_process_listing_df = None
+
+
+def _trim(df, cols):
+    keep = [c for c in cols if c in df.columns]
+    return df[keep]
+
+
+def _fetch_marcap_records():
+    import FinanceDataReader as fdr
+    df = _trim(fdr.StockListing("KRX"), _MARCAP_COLS)
+    return df.to_dict("records")
+
+
+def _fetch_listing_records():
+    import FinanceDataReader as fdr
+    df = _trim(fdr.StockListing("KRX-DESC"), _LISTING_COLS)
+    return df.to_dict("records")
+
+
+def _load_marcap_df():
+    global _process_marcap_df
+    if _process_marcap_df is None:
+        records = cache.memoize(cache.day_key("fdr_krx"), config.LISTING_TTL,
+                                 _fetch_marcap_records)
+        _process_marcap_df = pd.DataFrame(records)
+    return _process_marcap_df
+
+
+def _load_listing_df():
+    global _process_listing_df
+    if _process_listing_df is None:
+        records = cache.memoize(cache.day_key("fdr_krx_desc"), config.LISTING_TTL,
+                                 _fetch_listing_records)
+        _process_listing_df = pd.DataFrame(records)
+    return _process_listing_df
 
 
 def _col(df, *candidates):
@@ -29,11 +79,9 @@ class KrxClient:
     def _ensure(self):
         # 이미 주입된(테스트 등) 속성은 덮어쓰지 않는다 — None 인 항목만 채운다.
         if self._marcap is None:
-            import FinanceDataReader as fdr
-            self._marcap = fdr.StockListing("KRX")
+            self._marcap = _load_marcap_df()
         if self._listing is None:
-            import FinanceDataReader as fdr
-            self._listing = fdr.StockListing("KRX-DESC")
+            self._listing = _load_listing_df()
 
     def market_cap(self, stock_code):
         self._ensure()
