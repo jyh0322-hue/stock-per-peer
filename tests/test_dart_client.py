@@ -71,3 +71,21 @@ def test_finstate_is_cached_across_calls(tmp_path, monkeypatch):
     b = c.finstate("X", 2026, "HALF")
     assert r.calls == 1              # 두 번째는 캐시 히트
     assert len(a) == len(b)          # 동일 데이터 재구성
+
+
+def test_empty_finstate_uses_short_ttl(tmp_path, monkeypatch):
+    from app import cache, config
+    monkeypatch.setattr(cache, "CACHE_DIR", str(tmp_path))
+    cache._mem.clear()
+
+    class EmptyReader(FakeReader):
+        def finstate_all(self, corp, year, reprt_code, fs_div="CFS"):
+            return None
+
+    c = DartClient(reader=EmptyReader())
+    assert c.finstate("X", 2026, "HALF") is None
+    key = "finstate:X:2026:HALF:CFS"
+    expires_at = cache._mem[key][0]
+    import time as _t
+    # 30일이 아니라 1시간 근처로 만료되어야 함
+    assert expires_at - _t.time() <= config.FINSTATE_EMPTY_TTL + 5

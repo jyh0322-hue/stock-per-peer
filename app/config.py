@@ -17,6 +17,7 @@ OP_ACCOUNT_IDS = ["dart_OperatingIncomeLoss", "ifrs-full_ProfitLossFromOperating
 REVENUE_ACCOUNT_IDS = ["ifrs-full_Revenue"]
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", ".cache")
 FINSTATE_TTL = 60 * 60 * 24 * 30  # 30일
+FINSTATE_EMPTY_TTL = 60 * 60  # 미제출/빈 결과는 1시간만 캐시(공시 게시 후 곧 반영)
 
 
 def env(name):

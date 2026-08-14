@@ -42,15 +42,15 @@ class DartClient:
 
     def finstate(self, corp_code, year, reprt_key, fs_div="CFS"):
         key = "finstate:%s:%s:%s:%s" % (corp_code, year, reprt_key, fs_div)
-
-        def _produce():
-            df = retry(self.r.finstate_all, corp_code, year,
-                       config.REPRT[reprt_key], fs_div=fs_div)
-            if df is None:
-                return []
-            return df.to_dict("records")
-
-        records = cache.memoize(key, config.FINSTATE_TTL, _produce)
+        hit = cache.peek(key)
+        if hit is not None:
+            records = hit
+        else:
+            df_raw = retry(self.r.finstate_all, corp_code, year,
+                           config.REPRT[reprt_key], fs_div=fs_div)
+            records = [] if df_raw is None else df_raw.to_dict("records")
+            ttl = config.FINSTATE_TTL if records else config.FINSTATE_EMPTY_TTL
+            cache.put(key, records, ttl)
         if not records:
             return None
         return pd.DataFrame(records)
