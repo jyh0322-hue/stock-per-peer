@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pip install --user opendartreader)",
+      "Bash(python3 -c \"import OpenDartReader; print\\('OpenDartReader import OK, ver:', OpenDartReader.__version__ if hasattr\\(OpenDartReader,'__version__'\\) else 'n/a'\\)\")"
+    ]
+  }
+}
