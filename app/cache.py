@@ -18,6 +18,16 @@ def _path(key):
     return os.path.join(CACHE_DIR, safe + ".json")
 
 
+def _ensure_dir():
+    """캐시 디렉터리를 만들고 성공 여부를 반환. 컨테이너(HF Spaces 등)에서는
+    앱 디렉터리가 다른 uid 소유라 쓰기가 막힐 수 있으므로 실패해도 죽지 않는다."""
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        return True
+    except OSError:
+        return False
+
+
 def _remember(key, expires_at, value):
     """메모리 캐시에 저장하고 상한을 넘으면 가장 오래된 항목부터 버린다."""
     if key in _mem:
@@ -43,7 +53,11 @@ def memoize(key, ttl, producer):
     if hit and hit[0] > now:
         _touch(key)
         return hit[1]
-    os.makedirs(CACHE_DIR, exist_ok=True)
+    if not _ensure_dir():
+        # 디스크 캐시를 못 쓰는 환경(권한/읽기전용 FS)이라도 메모리 캐시로 동작해야 한다.
+        value = producer()
+        _remember(key, now + ttl, value)
+        return value
     p = _path(key)
     if ttl > 0 and os.path.exists(p) and (now - os.path.getmtime(p)) < ttl:
         try:
@@ -59,8 +73,8 @@ def memoize(key, ttl, producer):
         try:
             with open(p, "w", encoding="utf-8") as f:
                 json.dump(value, f, ensure_ascii=False)
-        except (TypeError, ValueError):
-            pass  # JSON 직렬화 불가한 값은 메모리 캐시만
+        except (TypeError, ValueError, OSError):
+            pass  # 직렬화 불가/쓰기 불가면 메모리 캐시만 사용
     return value
 
 
@@ -78,11 +92,10 @@ def put(key, value, ttl):
     """값을 메모리+디스크에 ttl 로 저장."""
     now = time.time()
     _remember(key, now + ttl, value)
-    if ttl > 0:
-        os.makedirs(CACHE_DIR, exist_ok=True)
+    if ttl > 0 and _ensure_dir():
         try:
             with open(_path(key), "w", encoding="utf-8") as f:
                 json.dump(value, f, ensure_ascii=False)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OSError):
             pass
 
