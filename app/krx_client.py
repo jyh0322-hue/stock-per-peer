@@ -18,8 +18,10 @@ _LISTING_COLS = ["Code", "Symbol", "Name", "Market", "Sector", "Industry"]
 # 않도록 모듈 레벨에 DataFrame 자체를 메모이즈한다. cache.memoize는 day_key +
 # TTL로 디스크/메모리 캐시를 제공하지만, 그 결과(JSON records)를 매번
 # pd.DataFrame(records)로 재구성하는 비용까지는 없애주지 않으므로 별도로 둔다.
-_process_marcap_df = None
-_process_listing_df = None
+# (day_key, DataFrame) 튜플로 저장해 자정을 넘긴 장기 구동 프로세스가 전날
+# 데이터를 계속 서빙하지 않도록 한다.
+_process_marcap_df = (None, None)
+_process_listing_df = (None, None)
 
 
 def _trim(df, cols):
@@ -41,20 +43,20 @@ def _fetch_listing_records():
 
 def _load_marcap_df():
     global _process_marcap_df
-    if _process_marcap_df is None:
-        records = cache.memoize(cache.day_key("fdr_krx"), config.LISTING_TTL,
-                                 _fetch_marcap_records)
-        _process_marcap_df = pd.DataFrame(records)
-    return _process_marcap_df
+    key = cache.day_key("fdr_krx")
+    if _process_marcap_df[0] != key:
+        records = cache.memoize(key, config.LISTING_TTL, _fetch_marcap_records)
+        _process_marcap_df = (key, pd.DataFrame(records))
+    return _process_marcap_df[1]
 
 
 def _load_listing_df():
     global _process_listing_df
-    if _process_listing_df is None:
-        records = cache.memoize(cache.day_key("fdr_krx_desc"), config.LISTING_TTL,
-                                 _fetch_listing_records)
-        _process_listing_df = pd.DataFrame(records)
-    return _process_listing_df
+    key = cache.day_key("fdr_krx_desc")
+    if _process_listing_df[0] != key:
+        records = cache.memoize(key, config.LISTING_TTL, _fetch_listing_records)
+        _process_listing_df = (key, pd.DataFrame(records))
+    return _process_listing_df[1]
 
 
 def _col(df, *candidates):
