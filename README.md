@@ -112,6 +112,63 @@ DART/KRX/뉴스/Claude(설정된 경우)까지 실제 네트워크를 태우는 
 Dockerfile은 `python:3.11-slim` 기반이며, 차트의 한글 라벨을 위해
 `fonts-nanum`을 설치하고 `app/`, `web/`만 복사해 이미지를 가볍게 유지한다.
 
+## GitHub Pages 자동 리포트
+
+FastAPI 서버 없이도, GitHub Actions가 `scripts/build_site.py`로 정적 HTML
+리포트를 생성해 GitHub Pages(`gh-pages` 브랜치)에 게시할 수 있다. 리포트는
+실행할 때마다 `gh-pages` 브랜치의 기존 내용을 먼저 내려받은 뒤 새 리포트를
+추가하므로 **누적**된다(이전 실행 결과가 지워지지 않는다).
+
+> **주의**: 무료 GitHub Pages는 **공개(public) 저장소**에서만 동작한다.
+> 비공개 저장소에서 쓰려면 GitHub Pro/Team/Enterprise 등 유료 플랜이 필요하다.
+
+### 1) Pages 활성화
+
+**Settings → Pages → Source**에서 **Deploy from a branch**를 선택하고,
+Branch를 **`gh-pages` / `(root)`** 로 지정한다. (`gh-pages` 브랜치는 워크플로가
+첫 실행될 때 자동으로 생성되므로, 최소 한 번 워크플로를 실행한 뒤 이 브랜치가
+목록에 나타나면 선택하면 된다.)
+
+### 2) 시크릿 등록
+
+**Settings → Secrets and variables → Actions → Repository secrets**에 다음을
+등록한다.
+
+| 시크릿 | 필수 여부 | 설명 |
+|---|---|---|
+| `OPENDART_API_KEY` | **필수** | 없으면 리포트 생성 자체가 실패한다. |
+| `ANTHROPIC_API_KEY` | 선택 | 없어도 나머지 분석(PER·PEER·공시)은 정상 생성되고, 투자포인트/리스크 섹션만 비활성으로 표시된다. |
+
+`GITHUB_TOKEN`은 별도 등록이 필요 없다 — GitHub Actions가 실행마다 자동으로
+발급하며, 워크플로의 `permissions: contents: write` 설정으로 `gh-pages`
+브랜치에 push할 수 있는 권한만 부여한다.
+
+### 3) 수동 실행
+
+**Actions 탭 → "정적 리포트 생성 및 GitHub Pages 배포" → Run workflow**를
+누르고, `stocks` 입력란에 쉼표로 구분한 종목명을 입력한다(예:
+`브이티,코스맥스`). 비워두면 저장소 루트의 `watchlist.txt`에 있는 종목
+목록을 사용한다.
+
+### 4) 매일 자동 실행
+
+`schedule` 트리거가 매일 08:00 KST(cron `0 23 * * *`, UTC 23:00)에 워크플로를
+실행하며, 이때는 항상 `watchlist.txt`의 종목 목록을 사용한다. 감시 종목을
+바꾸려면 `watchlist.txt`를 수정해서 커밋하면 된다.
+
+### 5) 결과 확인
+
+배포가 끝나면 다음 URL 형태로 리포트 목록에 접근할 수 있다.
+
+```
+https://<github-사용자명>.github.io/<저장소명>/
+```
+
+인덱스 페이지(`index.html`)는 지금까지 생성된 모든 리포트를 최신순으로
+나열하며, 각 리포트(`<종목명>.html`)는 인라인 CSS/JS만으로 구성된
+자기완결형(self-contained) 페이지라 외부 리소스 요청 없이 그대로 열람할 수
+있다.
+
 ## PER 정의
 
 ```

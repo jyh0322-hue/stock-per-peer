@@ -1,0 +1,105 @@
+name: 정적 리포트 생성 및 GitHub Pages 배포
+
+on:
+  workflow_dispatch:
+    inputs:
+      stocks:
+        description: "쉼표로 구분된 종목명 (예: 브이티,코스맥스). 비우면 watchlist.txt 를 사용합니다."
+        required: false
+        default: ""
+  schedule:
+    # 매일 08:00 KST = 전날 23:00 UTC
+    - cron: "0 23 * * *"
+
+permissions:
+  contents: write
+
+# 같은 워크플로가 겹쳐 돌면 gh-pages 브랜치에 동시에 push하며 경합이 생길 수 있으므로,
+# 그룹으로 묶어 뒤 실행이 앞 실행을 기다리게 한다(취소는 하지 않음 — 진행 중인 리포트
+# 생성을 중간에 끊고 싶지 않다).
+concurrency:
+  group: pages-report
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 저장소
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 한글 폰트 설치 (matplotlib 차트 라벨용)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-nanum
+          rm -rf ~/.cache/matplotlib
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 대상 종목 목록 준비
+        env:
+          STOCKS_INPUT: ${{ github.event.inputs.stocks }}
+        run: |
+          if [ -n "$STOCKS_INPUT" ]; then
+            : > stocks_run.txt
+            IFS=',' read -ra NAMES <<< "$STOCKS_INPUT"
+            for n in "${NAMES[@]}"; do
+              trimmed="$(echo "$n" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+              if [ -n "$trimmed" ]; then
+                echo "$trimmed" >> stocks_run.txt
+              fi
+            done
+          else
+            cp watchlist.txt stocks_run.txt
+          fi
+          echo "-- 이번 실행 대상 종목 --"
+          cat stocks_run.txt
+
+      - name: gh-pages 브랜치 존재 확인
+        id: ghp
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 기존 gh-pages 리포트 체크아웃 (리포트 누적을 위해)
+        if: steps.ghp.outputs.exists == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: site
+
+      - name: site 디렉터리 초기화 (gh-pages 첫 배포)
+        if: steps.ghp.outputs.exists == 'false'
+        run: mkdir -p site
+
+      - name: 정적 리포트 생성 (site/ 에 누적 기록)
+        env:
+          OPENDART_API_KEY: ${{ secrets.OPENDART_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 scripts/build_site.py --out site --watchlist stocks_run.txt
+
+      - name: gh-pages 브랜치에 커밋 & 푸시
+        working-directory: site
+        run: |
+          if [ ! -d .git ]; then
+            git init -b gh-pages
+            git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "변경 사항 없음 — 푸시를 생략합니다."
+            exit 0
+          fi
+          git commit -m "chore: 정적 리포트 갱신 ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+          git push origin HEAD:gh-pages
