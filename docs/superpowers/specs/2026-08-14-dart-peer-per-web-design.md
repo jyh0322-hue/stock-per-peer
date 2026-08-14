@@ -37,6 +37,9 @@
 | PEER 선정 | 동일 업종 **시총 상위 5개** |
 | PER 산식 | `시가총액 ÷ (최근 분기 영업이익 × 4)` (연환산, 영업이익 기준) |
 | 배포 | **Hugging Face Spaces (Docker, 무료 CPU)** |
+| 뉴스·블로그 수집 | **네이버 검색 API(공식) + 웹 크롤링 폴백** |
+| 투자포인트·리스크 요약 | **Claude API (Anthropic)** |
+| 텔레그램·증권 리서치 | 초기 제외(후속 확장 지점) |
 
 ---
 
@@ -135,15 +138,16 @@
 
 ---
 
-## 6. 데이터 플로우 (잡 1회 = 진행률 5단계)
+## 6. 데이터 플로우 (잡 1회 = 진행률 6단계)
 
 | 단계 | 작업 | 소스 |
 |---|---|---|
-| 1/5 종목 해석 | 종목명 → corp_code, stock_code, 업종 | DART + FDR |
-| 2/5 시총·업종 | 시총 스냅샷 조회, 동일 업종 시총 상위 5개 PEER 확정 | pykrx + FDR |
-| 3/5 PEER 실적 | PEER 5개 각각 최근 분기 영업이익 조회(캐시) | DART |
-| 4/5 PER 계산 | 시총 ÷ 연환산 영업이익 → PER, 중앙값·순위 산출 | metrics |
-| 5/5 타깃 심층 | 반기 실적 YoY·판관비 분해·5개년 추이·최근 공시 | DART (기존 로직) |
+| 1/6 종목 해석 | 종목명 → corp_code, stock_code, 업종 | DART + FDR |
+| 2/6 시총·업종 | 시총 스냅샷 조회, 동일 업종 시총 상위 5개 PEER 확정 | pykrx + FDR |
+| 3/6 PEER 실적 | PEER 5개 각각 최근 분기 영업이익 조회(캐시) | DART |
+| 4/6 PER 계산 | 시총 ÷ 연환산 영업이익 → PER, 중앙값·순위 산출 | metrics |
+| 5/6 공시·조립 | 타깃+PEER 최근 공시(DART `list`) | DART |
+| 6/6 뉴스·요약 | 뉴스·블로그 최근 1개월 수집 → Claude 투자포인트·리스크 요약 | 네이버 API + Claude |
 
 - 타깃이 업종 시총 5위 밖이면 PEER 5개 + 타깃 = 6행으로 표시(타깃 하이라이트).
 - 각 단계 종료 시 `progress_cb` 호출 → 프론트 진행바 갱신.
@@ -170,7 +174,8 @@ PER(영업이익 기준) = 시가총액 ÷ 연환산 영업이익
 3. **PER 막대차트**: PEER(+타깃) PER 비교, 업종 중앙값 점선 오버레이
 4. **타깃 심층분석**: 반기 실적 YoY 표 · 판관비 세부 분해 · 5개년 추이 차트 (기존 `stock_report.py` 재사용)
 5. **최근 공시**: 타깃+PEER 최근 90일 공시 목록, 유형 태그(정기·주요사항·발행 등) + 실적/증자 등 주요 이벤트 하이라이트
-6. **면책 고지**: 자동 집계 자료이며 투자자문·매매판단을 제공하지 않음.
+6. **투자포인트·리스크 요약**: 최근 1개월 뉴스·블로그 기반 Claude 요약. 투자포인트/리스크 각 3~5개, 문장마다 출처 각주 `[n]` + 하단 출처 목록(제목·매체·날짜·URL). §16 참조.
+7. **면책 고지**: 자동 집계 자료이며 투자자문·매매판단을 제공하지 않음.
 
 ---
 
@@ -231,7 +236,8 @@ PER(영업이익 기준) = 시가총액 ÷ 연환산 영업이익
 ## 12. 배포 (Hugging Face Spaces)
 
 - **Docker Space**로 배포. `Dockerfile`에서 `uvicorn app.main:app` 기동, 포트 7860(HF 기본).
-- `OPENDART_API_KEY`는 Space **Secrets**에 저장.
+- **키 관리**: 로컬은 프로젝트 루트 `.env` 파일(python-dotenv 자동 로드, `.gitignore` 제외), 배포는 Space **Secrets**. 같은 코드가 양쪽을 읽음(이미 설정된 환경변수는 `.env`가 덮어쓰지 않음).
+- 키 목록: `OPENDART_API_KEY`(필수), `ANTHROPIC_API_KEY`(뉴스 요약), `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET`(뉴스·블로그 API). 뉴스 관련 키 미설정 시 §16 섹션만 비활성(graceful degrade), 나머지 기능은 정상.
 - 무료 CPU 상시 실행. 콜드스타트 첫 요청 지연은 비동기 진행바로 흡수.
 - 아웃바운드 네트워크(DART·KRX) 허용됨(HF Spaces는 외부 호출 가능).
 
@@ -257,3 +263,100 @@ PER(영업이익 기준) = 시가총액 ÷ 연환산 영업이익
 ## 15. 면책
 
 본 앱은 금융감독원 OpenDART 공시와 KRX 시세를 자동 집계·정리한다. 수치의 정리·해석을 목적으로 하며, 특정 종목의 매수/매도 등 투자 판단이나 투자 자문을 제공하지 않는다. 투자의 최종 판단과 책임은 이용자 본인에게 있다.
+
+---
+
+## 16. 최근 뉴스·블로그 투자포인트·리스크 요약 (신규 서브시스템)
+
+타깃 종목에 대한 **최근 1개월** 뉴스·블로그를 수집해, Claude로 **투자포인트**와 **리스크**를 구조화 요약하고 **모든 문장에 출처를 명기**한다.
+
+### 16.1 목표 · 원칙
+
+- 최근 **1개월(30일)** 발행분만 대상. 그보다 오래된 자료는 로직에서 제외.
+- 요약의 모든 항목은 **수집된 자료에만 근거**(환각 금지). 문장마다 출처 인덱스 `[n]`를 부여.
+- 출처는 **제목·매체(또는 블로그명)·발행일·URL**을 명기.
+- 개인화된 투자자문이 아니라 **공개 자료의 정리·요약**임을 명확히 표기(면책 강화).
+- 뉴스 관련 키/자료가 없으면 이 섹션만 비활성화하고 나머지 결과는 정상 제공(graceful degrade).
+
+### 16.2 데이터 소스 (초기: 뉴스 + 블로그)
+
+| 소스 | 접근 | 날짜 필드 | 비고 |
+|---|---|---|---|
+| 네이버 뉴스 | 검색 API `/v1/search/news.json` | `pubDate`(RFC1123) | 1차 |
+| 네이버 블로그 | 검색 API `/v1/search/blog.json` | `postdate`(yyyymmdd) | 1차 |
+| 웹 크롤링 | 네이버 뉴스 검색 결과 페이지 | 목록의 날짜 파싱 | **폴백**(키 없음/실패 시) |
+
+- 키: `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`.
+- **후속 확장 지점**(초기 제외): 텔레그램 공개 채널(`t.me/s/<채널>`), 증권사 리서치(한경컨센서스 등). `news_client`에 소스 어댑터를 추가하는 형태로 확장.
+
+### 16.3 수집 · 1개월 필터 로직
+
+```
+검색어 = 회사명(정식) OR 종목명
+raw = 뉴스검색(검색어, display=30) + 블로그검색(검색어, display=20)
+cutoff = today - 30일
+items = []
+for it in raw:
+    dt = parse_date(it)                 # pubDate/postdate/크롤링 날짜
+    if dt is None: continue             # 날짜 불명은 보수적으로 제외
+    if dt < cutoff: continue            # 1개월 초과 제외
+    items.append({title, snippet, url, source, published: dt})
+items = dedup(items, key=정규화(title)+url)   # 중복 기사 제거
+items = sort_desc(items, by=published)[:MAX_ITEMS]   # 최신순 상한(예: 25)
+```
+
+- `parse_date`: 뉴스 `pubDate`(RFC1123) → datetime, 블로그 `postdate`(yyyymmdd) → datetime, 크롤링은 "N일 전/YYYY.MM.DD" 파싱.
+- 광고성/무관 필터: 제목·스니펫에 회사명이 포함되지 않으면 제외(간단 관련성 필터).
+
+### 16.4 요약 (Claude) — 구조화 출력
+
+- 수집된 `items`(제목+스니펫+날짜+매체, 본문 전체 아님)를 **번호 매겨** 하나의 프롬프트로 전달, **1회 호출**.
+- Claude에 JSON 스키마 강제:
+```json
+{
+  "investment_points": [{"text": "...", "sources": [1, 4]}],
+  "risks": [{"text": "...", "sources": [2]}],
+  "overall": "2~3문장 중립 요약"
+}
+```
+- 프롬프트 지침(핵심): "① 제공된 항목에만 근거할 것 ② 각 포인트/리스크에 근거 항목 번호를 `sources`로 명기 ③ 자료에 없으면 항목을 만들지 말 것 ④ 매수/매도 권유·목표주가 단정 금지, 사실·전망을 중립 서술 ⑤ 한국어."
+- 반환된 `sources` 번호를 수집 `items` 인덱스와 매핑해 **출처 객체**로 치환.
+- 모델: 비용·품질 균형을 위해 경량 Claude 모델 사용(설정 가능). 입력은 스니펫만이라 토큰 통제됨.
+
+### 16.5 출력 스키마 (`insights`)
+
+```json
+{
+  "as_of": "2026-08-14",
+  "window_days": 30,
+  "investment_points": [{"text": "...", "sources": [{"n":1,"title","source","date","url"}]}],
+  "risks": [{"text": "...", "sources": [ ... ]}],
+  "overall": "...",
+  "sources": [{"n":1,"title","source","date","url"}, ...],
+  "status": "ok | no_data | disabled"
+}
+```
+
+- `status`: 키 미설정 → `disabled`, 1개월 내 자료 없음 → `no_data`, 정상 → `ok`.
+
+### 16.6 아키텍처 편입
+
+- 신규 모듈:
+  - `app/news_client.py` — 네이버 API + 크롤링 폴백 + 날짜 파싱/1개월 필터/중복 제거. `fetch_recent(company, stock_name, days=30) -> List[Item]`.
+  - `app/insights.py` — `summarize(items, claude=None, as_of=None) -> dict`. Claude 호출자를 주입 가능(테스트 시 Fake 주입, 네트워크 없이 검증).
+- `pipeline.run_analysis`에 **6단계**로 편입(진행률 total 5→6). 실패·비활성은 예외 없이 `status`로 흡수.
+- `report.build_result`/`render_html`·프론트에 §8-6 섹션 렌더 추가.
+- env: `ANTHROPIC_API_KEY`, `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`. requirements에 `anthropic` 추가.
+
+### 16.7 에러 처리 · 비용 · 캐시
+
+| 상황 | 처리 |
+|---|---|
+| 네이버 키 없음/실패 | 크롤링 폴백 시도 → 그래도 실패 시 `status=disabled` |
+| 1개월 내 자료 0건 | `status=no_data`, 섹션에 "최근 1개월 자료 없음" 표기 |
+| Claude 키 없음/오류 | `status=disabled`, 수집 원문 목록만 출처로 노출(요약 생략) |
+| 비용 | Claude 1회 호출/종목, 결과는 `(종목, 당일)` 캐시 |
+
+### 16.8 면책 (강화)
+
+이 섹션의 요약은 최근 1개월 공개 뉴스·블로그를 자동 정리한 것으로, **작성자·매체의 견해**이며 본 서비스의 투자 권유가 아니다. 사실관계·수치는 원문 출처로 반드시 교차 확인해야 하며, 투자 판단과 책임은 이용자 본인에게 있다.
