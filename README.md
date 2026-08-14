@@ -1,3 +1,13 @@
+---
+title: DART 종목 PER PEER 분석
+emoji: 📊
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # DART 종목 PER·PEER 분석 웹앱
 
 종목명을 검색하면 DART 재무·공시와 KRX 시세를 이용해 **연환산 영업이익 기준
