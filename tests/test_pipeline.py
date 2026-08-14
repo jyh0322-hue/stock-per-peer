@@ -74,14 +74,32 @@ def test_run_analysis_progress_and_per():
     assert "deepdive" in res and res["deepdive"] is not None
     assert set(res["deepdive"].keys()) == {"overview", "income_statement", "margins", "trend", "basis"}
 
+    # 밸류에이션 위치 지표: stats["median"]은 파이프라인이 이미 계산한 값(타깃 포함,
+    # per_op=[15.0(타깃),25.0(코스맥스),6.0(한국콜마)]의 중앙값=15.0)을 그대로 재사용한다.
+    # 타깃 PER(forward, TTM은 FakeDart가 finstate를 제공하지 않아 미계산) = 15.0
+    # -> discount_pct = (15-15)/15*100 = 0.0 -> inline(업종 평균 수준).
+    val = res["valuation"]
+    assert val["level"] == "inline"
+    assert val["label"] == "업종 평균 수준"
+    assert val["median"] == res["stats"]["median"] == 15.0
+    assert val["discount_pct"] == 0.0
+    assert "15.0" in val["note"]
+    # rank/total은 peer(타깃 제외) 기준으로 valuation이 자체 계산: peer=[25.0,6.0] 중
+    # 타깃(15.0)보다 저렴한 건 6.0 하나 -> rank=2, total=peer 2개+타깃=3.
+    assert val["rank"] == 2 and val["total"] == 3
+    # peer 2개(<3) + TTM 미완성 -> 해당 caveat 두 개 + 공통 caveat이 반드시 포함
+    assert any("연환산 추정치" in c for c in val["caveats"])
+    assert any("비교 대상이 2개로 적어" in c for c in val["caveats"])
+    assert any("밸류에이션 지표의 하나" in c for c in val["caveats"])
+
 
 def test_run_analysis_includes_insights_and_7_steps():
     steps = []
 
     class FakeNews:
-        def fetch_recent(self, company, stock_name, days=30, now=None):
+        def fetch_all(self, company, stock_name, days=30, now=None):
             return [{"title": "호재", "snippet": "매출↑", "url": "http://n1",
-                     "source": "뉴스", "published": None}]
+                     "source": "뉴스", "published": None, "kind": "news"}]
 
     def fake_insights(items, company, as_of=None):
         return {"status": "ok", "investment_points": [{"text": "매출 성장", "sources": []}],
@@ -96,7 +114,7 @@ def test_run_analysis_includes_insights_and_7_steps():
 
 def test_run_analysis_survives_news_failure():
     class BoomNews:
-        def fetch_recent(self, company, stock_name, days=30, now=None):
+        def fetch_all(self, company, stock_name, days=30, now=None):
             raise RuntimeError("network down")
 
     def fake_insights(items, company, as_of=None):
@@ -199,3 +217,10 @@ def test_insufficient_peers_flag_true_when_fewer_than_two_peer_pers():
 def test_insufficient_peers_flag_false_when_enough_peer_pers():
     res = pipeline.run_analysis("브이티", FakeDart(), FakeKrx())
     assert res["stats"]["insufficient_peers"] is False
+
+
+def test_valuation_unavailable_when_fewer_than_two_peer_pers():
+    # peer PER이 2개 미만이면 valuation도 "비교 불가"로 저평가/고평가 판정을 내리지 않아야 한다.
+    res = pipeline.run_analysis("브이티", SparseOpDart(), FakeKrx())
+    assert res["valuation"]["level"] == "unavailable"
+    assert res["valuation"]["label"] == "비교 불가"

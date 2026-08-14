@@ -1,4 +1,6 @@
-from app import company, config, financials, metrics, report
+from datetime import date, datetime, timedelta
+
+from app import company, config, financials, metrics, report, valuation
 
 
 def _emit(cb, step, cur, total):
@@ -69,6 +71,50 @@ def _apply_ttm_per(row, dart, corp_code, market_cap, fs_div):
         row["per_net_ttm"] = metrics.per_op(market_cap, net_ttm)
     except Exception:
         pass
+
+
+def _has_recent_high_importance(disclosures, days=30, today=None):
+    """importance == "high"인 공시가 최근 days일 내에 있는지 여부. date 파싱 실패
+    항목은 무시(과거 오분류를 막기 위해 "있다"로 간주하지 않음)."""
+    today = today or date.today()
+    cutoff = today - timedelta(days=days)
+    for d in disclosures or []:
+        if d.get("importance") != "high":
+            continue
+        raw = d.get("date") or ""
+        try:
+            dt = datetime.strptime(raw, "%Y%m%d").date()
+        except Exception:
+            continue
+        if dt >= cutoff:
+            return True
+    return False
+
+
+def _assess_valuation(target_row, peer_rows, stats, deepdive, disclosures):
+    """target_row/peer_rows/stats/deepdive/disclosures로부터 valuation.assess()에
+    필요한 값을 뽑아 채운다 — pure-function인 valuation 모듈과 pipeline의 데이터
+    형태 사이의 어댑터."""
+    target_per = target_row.get("per_op_ttm")
+    if target_per is None:
+        target_per = target_row.get("per_op_fwd")
+    peer_pers = [r["per_op"] for r in peer_rows]
+    peer_count = sum(1 for p in peer_pers if p is not None)
+
+    margin_delta_pp = None
+    margins = deepdive.get("margins") if deepdive else None
+    if margins:
+        margin_delta_pp = margins.get("op_margin", {}).get("delta")
+
+    has_major_disclosure = _has_recent_high_importance(disclosures, days=30)
+
+    return valuation.assess(
+        target_per, peer_pers, stats,
+        ttm_complete=target_row.get("ttm_complete", False),
+        peer_count=peer_count,
+        margin_delta_pp=margin_delta_pp,
+        has_major_disclosure=has_major_disclosure,
+    )
 
 
 def _resolve_verified_peer(dart, stock_code):
@@ -169,8 +215,8 @@ def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None)
                 krx_name = krx.name_of(target_code)
             except Exception:
                 krx_name = None
-            items = news.fetch_recent(info["corp_name"], krx_name or info["corp_name"],
-                                      days=config.NEWS_WINDOW_DAYS)
+            items = news.fetch_all(info["corp_name"], krx_name or info["corp_name"],
+                                   days=config.NEWS_WINDOW_DAYS)
             ins = insights_fn(items, info["corp_name"])
         except Exception:
             pass
@@ -180,4 +226,7 @@ def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None)
     # peer는 지연시간 문제로 TTM PER을 계산하지 않는다(위 5단계 주석 참고) — 프런트가
     # per_op_ttm 결측을 "데이터 없음"이 아니라 "미계산(방식 차이)"으로 표시할 수 있게 플래그.
     res["peer_ttm_computed"] = False
+    # 밸류에이션 위치 지표(사실 서술 전용, 투자의견 아님) — target/peer PER, 마진 변화,
+    # 최근 30일 내 고중요도 공시 여부를 종합해 업종 대비 위치를 계산한다.
+    res["valuation"] = _assess_valuation(target_row, peer_rows, stats, deepdive, disc)
     return res

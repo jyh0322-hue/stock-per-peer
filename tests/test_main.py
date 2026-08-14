@@ -44,7 +44,7 @@ class FakeKrx:
 
 
 class FakeNews:
-    def fetch_recent(self, company, stock_name, days=30, now=None):
+    def fetch_all(self, company, stock_name, days=30, now=None):
         return []
 
 

@@ -25,6 +25,16 @@ KST = timezone(timedelta(hours=9))
 
 GOOGLE_NEWS_RSS_URL = "https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
 NAVER_NEWS_SEARCH_URL = "https://search.naver.com/search.naver?where=news&query={q}"
+NAVER_BLOG_SEARCH_URL = "https://search.naver.com/search.naver?where=blog&query={q}"
+
+# 투자의견/증권가 코멘트/목표주가 등 "의견성" 기사를 추가로 훑기 위한 질의어 템플릿.
+# {name}은 stock_name(있으면)·company 순으로 채워진다(fetch_recent와 동일한 우선순위).
+OPINION_QUERY_TEMPLATES = [
+    "{name} 목표주가",
+    "{name} 투자의견",
+    "{name} 실적 전망",
+    "{name} 증권",
+]
 
 _UA_HEADERS = {
     "User-Agent": (
@@ -252,6 +262,101 @@ def parse_naver_html(html_text, now):
     return out
 
 
+def parse_naver_blog_html(html_text, now):
+    """네이버 블로그 검색 결과 HTML 파싱(방어적). 마크업이 자주 바뀌므로 parse_naver_html과
+    동일한 원칙으로 짠다: 실패 시 예외를 삼키고 빈 리스트를 반환한다."""
+    if not html_text or lxml_html is None:
+        return []
+    try:
+        doc = lxml_html.fromstring(html_text)
+    except Exception:
+        return []
+
+    try:
+        anchors = doc.xpath(
+            '//a[contains(concat(" ", normalize-space(@class), " "), " title_link ")]'
+            ' | //a[contains(concat(" ", normalize-space(@class), " "), " api_txt_lines ")'
+            ' and contains(concat(" ", normalize-space(@class), " "), " total_tit ")]'
+        )
+    except Exception:
+        anchors = []
+
+    out = []
+    for a in anchors:
+        try:
+            title = _strip(a.get("title") or a.text_content())
+            url = (a.get("href") or "").strip()
+            if not title or not url:
+                continue
+
+            # 포스트 하나를 감싸는 상위 컨테이너를 찾아 그 안에서 스니펫/블로그명/날짜를 탐색
+            container = a
+            for _ in range(6):
+                parent = container.getparent()
+                if parent is None:
+                    break
+                container = parent
+                cls = container.get("class") or ""
+                if "total_wrap" in cls or "bx" == cls.strip() or "blog_" in cls:
+                    break
+
+            snippet = ""
+            try:
+                dsc_nodes = container.xpath(
+                    './/a[contains(@class,"dsc_link")] | .//div[contains(@class,"total_dsc")]'
+                    ' | .//a[contains(@class,"api_txt_lines") and not(contains(@class,"total_tit"))]'
+                )
+                if dsc_nodes:
+                    snippet = _strip(dsc_nodes[0].text_content())
+            except Exception:
+                snippet = ""
+
+            source = ""
+            published = None
+            try:
+                info_nodes = container.xpath(
+                    './/a[contains(@class,"name")] | .//span[contains(@class,"sub_time")]'
+                    ' | .//span[contains(@class,"date")] | .//span[contains(@class,"sub_txt")]'
+                )
+                for node in info_nodes:
+                    t = (node.text_content() or "").strip()
+                    if not t:
+                        continue
+                    if published is None:
+                        cand = parse_relative_date(t, now)
+                        if cand is not None:
+                            published = cand
+                            continue
+                    if not source and not re.search(r"\d", t):
+                        source = t
+            except Exception:
+                pass
+
+            out.append({
+                "title": title,
+                "snippet": snippet,
+                "url": url,
+                "source": source or "네이버블로그",
+                "published": published,
+            })
+        except Exception:
+            continue
+
+    return out
+
+
+def _relevant_only(items, company, stock_name):
+    """제목/스니펫에 회사명(법인명에서 "(주)"/"주식회사" 제거한 키, 또는 KRX 상장명 키)
+    중 하나라도 포함된 항목만 남긴다. fetch_recent/fetch_opinions/fetch_blog가 공유."""
+    company_key = _norm(_clean_company_name(company))
+    stock_key = _norm(stock_name)
+    return [
+        it for it in items
+        if (company_key and (company_key in _norm(it.get("title")) or company_key in _norm(it.get("snippet"))))
+        or (stock_key and (stock_key in _norm(it.get("title")) or stock_key in _norm(it.get("snippet"))))
+    ]
+
+
 class NewsClient:
     def __init__(self, fetch=None):
         self._fetch = fetch or self._http_fetch
@@ -289,15 +394,79 @@ class NewsClient:
 
         # 관련성 판정은 두 이름(법인 정식명칭에서 "(주)"/"주식회사"를 뗀 키, KRX 상장명 키)
         # 중 하나만 맞아도 통과시킨다 — 둘 중 하나가 늘 실제 매칭 대상과 어긋나기 쉽다.
-        company_key = _norm(_clean_company_name(company))
-        stock_key = _norm(stock_name)
-        relevant = [
-            it for it in raw
-            if (company_key and (company_key in _norm(it.get("title")) or company_key in _norm(it.get("snippet"))))
-            or (stock_key and (stock_key in _norm(it.get("title")) or stock_key in _norm(it.get("snippet"))))
-        ]
+        relevant = _relevant_only(raw, company, stock_name)
 
         recent = filter_recent(relevant, days, now)
         recent = dedup(recent)
         recent.sort(key=lambda i: i["published"], reverse=True)
-        return recent[: config.NEWS_MAX_ITEMS]
+        recent = recent[: config.NEWS_MAX_ITEMS]
+        for it in recent:
+            it["kind"] = "news"
+        return recent
+
+    def fetch_opinions(self, company, stock_name, days=30, now=None):
+        """투자의견/증권가 코멘트/목표주가/실적전망 등 "의견성" 기사를 추가 질의어로
+        수집한다. 구글 뉴스 RSS만 사용(네이버 뉴스 검색은 fetch_recent의 보조 소스로
+        이미 커버). 여러 질의 결과를 합쳐 중복 제거 후 최신순으로 상한을 둔다."""
+        now = now or datetime.now(KST)
+        query_name = stock_name or company
+        if not query_name:
+            return []
+
+        raw = []
+        for template in OPINION_QUERY_TEMPLATES:
+            q = template.format(name=query_name)
+            try:
+                rss_url = GOOGLE_NEWS_RSS_URL.format(q=quote(q))
+                rss_text = self._fetch(rss_url)
+                raw.extend(parse_google_rss(rss_text))
+            except Exception:
+                continue
+
+        relevant = _relevant_only(raw, company, stock_name)
+        recent = filter_recent(relevant, days, now)
+        recent = dedup(recent)
+        recent.sort(key=lambda i: i["published"], reverse=True)
+        recent = recent[: config.NEWS_MAX_ITEMS]
+        for it in recent:
+            it["kind"] = "opinion"
+        return recent
+
+    def fetch_blog(self, company, stock_name, days=30, now=None):
+        """네이버 블로그 검색에서 분석글/후기성 포스트를 수집한다. 구글 뉴스 RSS는
+        블로그를 색인하지 않으므로 별도 소스가 필요하다. 파싱 실패는 조용히 빈 리스트로
+        처리한다(parse_naver_blog_html이 이미 방어적)."""
+        now = now or datetime.now(KST)
+        query = stock_name or company
+        if not query:
+            return []
+
+        try:
+            blog_url = NAVER_BLOG_SEARCH_URL.format(q=quote(query))
+            blog_text = self._fetch(blog_url)
+            raw = parse_naver_blog_html(blog_text, now)
+        except Exception:
+            raw = []
+
+        relevant = _relevant_only(raw, company, stock_name)
+        recent = filter_recent(relevant, days, now)
+        recent = dedup(recent)
+        recent.sort(key=lambda i: i["published"], reverse=True)
+        for it in recent:
+            it["kind"] = "blog"
+        return recent
+
+    def fetch_all(self, company, stock_name, days=30, now=None):
+        """뉴스 + 투자의견 + 블로그를 합쳐 중복 제거·최근 days일 필터·최신순 정렬 후
+        config.NEWS_MAX_ITEMS_ALL개로 상한을 둔 리스트를 반환한다. 각 소스는 이미
+        자체적으로 실패를 삼키므로(네트워크 예외 포함) 이 메서드는 예외를 던지지 않는다."""
+        now = now or datetime.now(KST)
+        news = self.fetch_recent(company, stock_name, days=days, now=now)
+        opinions = self.fetch_opinions(company, stock_name, days=days, now=now)
+        blogs = self.fetch_blog(company, stock_name, days=days, now=now)
+
+        merged = news + opinions + blogs
+        merged = dedup(merged)
+        merged = filter_recent(merged, days, now)
+        merged.sort(key=lambda i: i["published"], reverse=True)
+        return merged[: config.NEWS_MAX_ITEMS_ALL]

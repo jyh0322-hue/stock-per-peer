@@ -12,6 +12,7 @@ PEER_COUNT = 5
 EOK = 1e8  # 원 -> 억원
 NEWS_WINDOW_DAYS = 30
 NEWS_MAX_ITEMS = 25
+NEWS_MAX_ITEMS_ALL = 40  # fetch_all(뉴스+투자의견+블로그 병합) 상한
 REPRT = {"Q1": "11013", "HALF": "11012", "Q3": "11014", "ANNUAL": "11011"}
 REPRT_ORDER = ["ANNUAL", "Q3", "HALF", "Q1"]  # 최신성 판단용(누적 범위 큰 순)
 OP_ACCOUNT_IDS = ["dart_OperatingIncomeLoss", "ifrs-full_ProfitLossFromOperatingActivities"]
