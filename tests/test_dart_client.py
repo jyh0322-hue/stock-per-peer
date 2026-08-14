@@ -50,3 +50,24 @@ def test_recent_disclosures_tags_type():
     ds = c.recent_disclosures("00126380")
     assert ds[0]["date"] == "20260810"
     assert any("유상증자" in d["title"] for d in ds)
+
+
+def test_finstate_is_cached_across_calls(tmp_path, monkeypatch):
+    from app import cache
+    monkeypatch.setattr(cache, "CACHE_DIR", str(tmp_path))
+    cache._mem.clear()
+
+    class CountingReader(FakeReader):
+        def __init__(self):
+            self.calls = 0
+
+        def finstate_all(self, corp, year, reprt_code, fs_div="CFS"):
+            self.calls += 1
+            return FakeReader.finstate_all(self, corp, year, reprt_code, fs_div)
+
+    r = CountingReader()
+    c = DartClient(reader=r)
+    a = c.finstate("X", 2026, "HALF")
+    b = c.finstate("X", 2026, "HALF")
+    assert r.calls == 1              # 두 번째는 캐시 히트
+    assert len(a) == len(b)          # 동일 데이터 재구성

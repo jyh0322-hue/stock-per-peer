@@ -1,10 +1,9 @@
 import time
 from datetime import date, timedelta
-from typing import Optional
 
-from app import config, quarterly
+import pandas as pd
 
-_LATEST_YEAR = date.today().year
+from app import cache, config, quarterly
 
 
 def retry(fn, *a, tries=5, **k):
@@ -42,12 +41,24 @@ class DartClient:
         }
 
     def finstate(self, corp_code, year, reprt_key, fs_div="CFS"):
-        return retry(self.r.finstate_all, corp_code, year,
-                     config.REPRT[reprt_key], fs_div=fs_div)
+        key = "finstate:%s:%s:%s:%s" % (corp_code, year, reprt_key, fs_div)
+
+        def _produce():
+            df = retry(self.r.finstate_all, corp_code, year,
+                       config.REPRT[reprt_key], fs_div=fs_div)
+            if df is None:
+                return []
+            return df.to_dict("records")
+
+        records = cache.memoize(key, config.FINSTATE_TTL, _produce)
+        if not records:
+            return None
+        return pd.DataFrame(records)
 
     def latest_quarter_op(self, corp_code, fs_div="CFS"):
         # 최신 보고서 탐색: 올해부터 과거로, 분기 최신성 순서
-        for year in range(_LATEST_YEAR, _LATEST_YEAR - 2, -1):
+        latest_year = date.today().year
+        for year in range(latest_year, latest_year - 2, -1):
             for reprt_key in ("Q3", "HALF", "Q1", "ANNUAL"):
                 try:
                     df = self.finstate(corp_code, year, reprt_key, fs_div)

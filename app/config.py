@@ -16,6 +16,7 @@ REPRT_ORDER = ["ANNUAL", "Q3", "HALF", "Q1"]  # 최신성 판단용(누적 범�
 OP_ACCOUNT_IDS = ["dart_OperatingIncomeLoss", "ifrs-full_ProfitLossFromOperatingActivities"]
 REVENUE_ACCOUNT_IDS = ["ifrs-full_Revenue"]
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", ".cache")
+FINSTATE_TTL = 60 * 60 * 24 * 30  # 30일
 
 
 def env(name):
