@@ -1749,15 +1749,19 @@ git commit -m "feat: HF Spaces 배포 산출물 + 실API 스모크 + 문서"
 - Create: `app/news_client.py`, `tests/test_news_client.py`
 - Modify: `requirements.txt` (`anthropic` 추가)
 
+> **변경(2026-08-14)**: 네이버 검색 API 키 발급이 불가하여 **구글 뉴스 RSS를 기본 소스**로, **네이버 뉴스 검색 HTML 크롤링을 보조 소스**로 사용한다. API 키 불필요.
+
 **Interfaces:**
 - Consumes: `config`.
 - Produces:
-  - `parse_news_date(pubdate: str) -> Optional[datetime]` (RFC1123)
-  - `parse_blog_date(postdate: str) -> Optional[datetime]` (yyyymmdd)
-  - `filter_recent(items: List[dict], days: int, now: datetime) -> List[dict]` (published < cutoff 제외, published None 제외)
-  - `dedup(items: List[dict]) -> List[dict]` (정규화 title+url 기준)
-  - `class NewsClient` — `fetch_recent(company, stock_name, days=30, now=None) -> List[dict]` (item: `{"title","snippet","url","source","published"}`)
-  - 주입점: `NewsClient(get=None)` — `get(url, params, headers)->dict` 를 주입해 네트워크 없이 테스트.
+  - `parse_rss_date(pubdate: str) -> Optional[datetime]` (RFC1123, 구글뉴스 `<pubDate>`)
+  - `parse_relative_date(text: str, now: datetime) -> Optional[datetime]` ("3일 전"/"2026.08.11." 등 네이버 표기)
+  - `filter_recent(items, days, now) -> List[dict]` (published None/초과 제외)
+  - `dedup(items) -> List[dict]` (정규화 title+url 기준)
+  - `parse_google_rss(xml_text: str) -> List[dict]` (item: `{"title","snippet","url","source","published"}`)
+  - `parse_naver_html(html_text: str, now) -> List[dict]`
+  - `class NewsClient(fetch=None)` — `fetch(url) -> str` 주입해 네트워크 없이 테스트. `fetch_recent(company, stock_name, days=30, now=None) -> List[dict]`
+    - 구글 RSS 우선 수집 → 결과 부족(<5건) 시 네이버 HTML 보조 수집 → 병합·중복제거·1개월 필터·최신순 상한 25건.
 
 - [ ] **Step 1: 실패 테스트 작성 (`tests/test_news_client.py`)**
 
