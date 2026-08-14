@@ -96,3 +96,50 @@ def test_build_prompt_lists_numbered_items():
     assert "1. " in prompt
     assert "2. " in prompt
     assert "브이티" in prompt
+
+
+# ---- summarize_industry ---------------------------------------------------
+
+def _industry_items():
+    return [
+        {"title": "화학제품 업황 개선 조짐", "snippet": "수출 회복세", "url": "http://i1",
+         "source": "산업신문", "published": None, "kind": "industry"},
+        {"title": "화학업종 수출 전망 밝아", "snippet": "가격 반등", "url": "http://i2",
+         "source": "경제지", "published": None, "kind": "industry"},
+    ]
+
+
+def test_summarize_industry_no_data_status():
+    res = insights.summarize_industry([], sector="화학제품")
+    assert res["status"] == "no_data"
+
+
+def test_summarize_industry_disabled_when_no_claude_keeps_sources():
+    res = insights.summarize_industry(
+        _industry_items(), sector="화학제품",
+        claude=lambda p: (_ for _ in ()).throw(RuntimeError()))
+    assert res["status"] == "disabled"
+    assert len(res["sources"]) == 2
+    assert res["summary"] is None
+
+
+def test_summarize_industry_maps_sources():
+    fake_json = ('{"points":[{"text":"업황 개선 조짐","sources":[1]}],'
+                 '"summary":"업황이 개선되는 모습입니다."}')
+    res = insights.summarize_industry(_industry_items(), sector="화학제품", claude=lambda p: fake_json)
+    assert res["status"] == "ok"
+    assert res["points"][0]["sources"][0]["url"] == "http://i1"
+    assert res["summary"] == "업황이 개선되는 모습입니다."
+
+
+def test_summarize_industry_unparseable_json_is_disabled():
+    res = insights.summarize_industry(_industry_items(), sector="화학제품", claude=lambda p: "not json")
+    assert res["status"] == "disabled"
+    assert len(res["sources"]) == 2
+
+
+def test_build_industry_prompt_lists_numbered_items_and_sector():
+    prompt = insights.build_industry_prompt("화학제품", _industry_items())
+    assert "1. " in prompt
+    assert "2. " in prompt
+    assert "화학제품" in prompt

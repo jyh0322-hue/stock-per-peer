@@ -427,6 +427,101 @@ def test_fetch_all_raising_fetcher_yields_empty_list_not_exception():
     assert items == []
 
 
+# ---- _industry_query_terms ---------------------------------------------
+
+def test_industry_query_terms_shortens_verbose_sector_string():
+    terms = nc._industry_query_terms("기타 화학제품 제조업")
+    assert terms  # usable terms
+    assert all(len(t) <= 10 for t in terms)
+    assert "제조업" not in terms[0]
+    assert "기타" not in terms[0]
+
+
+def test_industry_query_terms_unusable_input_returns_empty_list():
+    assert nc._industry_query_terms("") == []
+    assert nc._industry_query_terms(None) == []
+    assert nc._industry_query_terms("제조업") == []
+    assert nc._industry_query_terms("기타") == []
+
+
+def test_industry_query_terms_splits_on_comma_and_caps_at_two():
+    terms = nc._industry_query_terms("화장품, 기타 화학제품 제조업, 세번째 항목")
+    assert len(terms) <= 2
+    assert "화장품" in terms
+
+
+# ---- NewsClient.fetch_industry -------------------------------------------
+
+INDUSTRY_RSS = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<item>
+<title>화학제품 업황 개선 조짐 - 산업신문</title>
+<link>http://i1</link>
+<pubDate>Mon, 11 Aug 2026 09:30:00 GMT</pubDate>
+<description>업황 관련 내용</description>
+<source>산업신문</source>
+</item>
+</channel></rss>
+"""
+
+
+def test_fetch_industry_tags_kind_industry_and_respects_window():
+    now = datetime(2026, 8, 14, tzinfo=KST)
+
+    def fetch(url):
+        return INDUSTRY_RSS
+
+    client = nc.NewsClient(fetch=fetch)
+    items = client.fetch_industry("기타 화학제품 제조업", days=30, now=now)
+    assert len(items) >= 1
+    assert all(i["kind"] == "industry" for i in items)
+
+
+def test_fetch_industry_excludes_items_outside_window():
+    now = datetime(2026, 8, 14, tzinfo=KST)
+    old_rss = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<item>
+<title>오래된 업황 기사 - 산업신문</title>
+<link>http://old-industry</link>
+<pubDate>Mon, 01 Jun 2026 09:30:00 GMT</pubDate>
+<description>오래된 업황</description>
+<source>산업신문</source>
+</item>
+</channel></rss>
+"""
+
+    def fetch(url):
+        return old_rss
+
+    client = nc.NewsClient(fetch=fetch)
+    items = client.fetch_industry("기타 화학제품 제조업", days=30, now=now)
+    assert items == []
+
+
+def test_fetch_industry_returns_empty_when_no_usable_terms():
+    calls = []
+
+    def fetch(url):
+        calls.append(url)
+        return ""
+
+    client = nc.NewsClient(fetch=fetch)
+    items = client.fetch_industry("제조업", days=30, now=datetime(2026, 8, 14, tzinfo=KST))
+    assert items == []
+    assert calls == []  # 검색어가 없으면 아예 요청을 보내지 않음
+
+
+def test_fetch_industry_swallows_fetch_exception():
+    def fetch(url):
+        raise RuntimeError("network down")
+
+    client = nc.NewsClient(fetch=fetch)
+    items = client.fetch_industry("기타 화학제품 제조업", days=30,
+                                  now=datetime(2026, 8, 14, tzinfo=KST))
+    assert items == []
+
+
 def test_fetch_recent_queries_with_krx_name_when_available():
     # 검색 질의어 자체도 (DART 법인명이 아니라) KRX 상장명을 우선 사용해야 한다 —
     # 뉴스 헤드라인이 실제로 쓰는 표기라 검색 적중률이 높다.

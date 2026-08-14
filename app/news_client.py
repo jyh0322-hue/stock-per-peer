@@ -36,6 +36,13 @@ OPINION_QUERY_TEMPLATES = [
     "{name} 증권",
 ]
 
+# 업종 동향 검색 시 뒤에 붙이는 접미어. "{term} 업황"/"{term} 전망"/"{term} 수출" 형태로 질의한다.
+INDUSTRY_QUERY_SUFFIXES = ["업황", "전망", "수출"]
+
+# FDR/KRX가 주는 업종명은 통계청 표준산업분류 표기라 장황하다(예: "기타 화학제품 제조업").
+# 검색 질의어로는 부적합하므로 걸러내는 토큰들.
+_INDUSTRY_STRIP_TOKENS = ["제조업", "및", "기타"]
+
 _UA_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -345,6 +352,27 @@ def parse_naver_blog_html(html_text, now):
     return out
 
 
+def _industry_query_terms(sector):
+    """업종 문자열을 검색 질의어로 쓸 수 있게 짧은 토큰 1~2개로 축약한다.
+    "기타 화학제품 제조업" -> ["화학제품"]. 콤마/세미콜론으로 나뉜 항목이 있으면
+    각각 정제해 최대 2개까지 취한다. 정제 후 아무것도 남지 않으면 빈 리스트."""
+    if not sector:
+        return []
+    segments = re.split(r"[,;]", sector)
+    out = []
+    for seg in segments:
+        t = seg.strip()
+        for tok in _INDUSTRY_STRIP_TOKENS:
+            t = t.replace(tok, "")
+        t = re.sub(r"\s+", " ", t).strip()
+        if not t or t in out:
+            continue
+        out.append(t)
+        if len(out) >= 2:
+            break
+    return out
+
+
 def _relevant_only(items, company, stock_name):
     """제목/스니펫에 회사명(법인명에서 "(주)"/"주식회사" 제거한 키, 또는 KRX 상장명 키)
     중 하나라도 포함된 항목만 남긴다. fetch_recent/fetch_opinions/fetch_blog가 공유."""
@@ -470,3 +498,32 @@ class NewsClient:
         merged = filter_recent(merged, days, now)
         merged.sort(key=lambda i: i["published"], reverse=True)
         return merged[: config.NEWS_MAX_ITEMS_ALL]
+
+    def fetch_industry(self, sector, days=30, now=None):
+        """업종 동향(업황/전망/수출) 뉴스를 구글 뉴스 RSS로 수집한다. sector가 비어있거나
+        정제 후 쓸만한 검색어가 없으면(_industry_query_terms가 빈 리스트) 빈 리스트를
+        반환한다. 개별 회사 관련성 필터(_relevant_only)는 적용하지 않는다 — 질의어 자체가
+        업종을 특정하므로 회사명 매칭은 의미가 없다."""
+        now = now or datetime.now(KST)
+        terms = _industry_query_terms(sector)
+        if not terms:
+            return []
+
+        raw = []
+        for term in terms:
+            for suffix in INDUSTRY_QUERY_SUFFIXES:
+                q = "%s %s" % (term, suffix)
+                try:
+                    rss_url = GOOGLE_NEWS_RSS_URL.format(q=quote(q))
+                    rss_text = self._fetch(rss_url)
+                    raw.extend(parse_google_rss(rss_text))
+                except Exception:
+                    continue
+
+        recent = filter_recent(raw, days, now)
+        recent = dedup(recent)
+        recent.sort(key=lambda i: i["published"], reverse=True)
+        recent = recent[: config.NEWS_MAX_ITEMS]
+        for it in recent:
+            it["kind"] = "industry"
+        return recent

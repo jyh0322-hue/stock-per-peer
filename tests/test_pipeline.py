@@ -39,6 +39,13 @@ class FakeKrx:
     def sector_of(self, code):
         return "화장품"
 
+    def profile(self, code):
+        # company.overview()가 이 값을 deepdive["overview"]["sector"]/["industry"]로 채운다
+        # (실제 KRX-DESC 표기처럼 industry는 장황한 표준산업분류 문구를 흉내낸다).
+        return {"market": "KOSDAQ", "sector": "화장품", "industry": "기타 화학제품 제조업",
+                "products": "화장품", "representative": "대표이사", "homepage": None,
+                "region": None, "listing_date": None}
+
     def market_cap(self, code):
         return self._mc.get(code)
 
@@ -66,13 +73,20 @@ def test_run_analysis_progress_and_per():
     # 타깃 PER = 시총3000 / (50*4=200) = 15.0
     assert res["target"]["per_op"] == 15.0
     assert res["stats"]["count"] >= 2
-    assert len(steps) == 7 and steps[-1][1] == 7
+    assert len(steps) == 8 and steps[-1][1] == 8
     # news/insights_fn 미주입 시에도 분석은 성공하고, insights는 비활성 상태로 채워짐
     assert res["insights"]["status"] == "disabled"
-    # 심층분석은 FakeDart/FakeKrx가 finstate/company_info/profile을 제공하지 않아도
-    # (각 조각이 try/except로 감싸여) 예외 없이 deepdive 키 자체는 채워져야 한다.
+    # 심층분석은 FakeDart가 finstate/company_info를 제공하지 않아도(각 조각이
+    # try/except로 감싸여) 예외 없이 deepdive 키 자체는 채워져야 한다.
     assert "deepdive" in res and res["deepdive"] is not None
     assert set(res["deepdive"].keys()) == {"overview", "income_statement", "margins", "trend", "basis"}
+
+    # 재무흐름 인사이트(규칙기반)는 항상 채워진다(deepdive 조각이 비어도 예외 없이).
+    assert "financial_insight" in res
+    assert set(res["financial_insight"].keys()) == {"headline", "findings", "cost_breakdown"}
+
+    # 업종 동향은 news 미주입이면 빈 결과로 저하한다.
+    assert res["industry"] == {"terms": [], "items": [], "summary": None}
 
     # 밸류에이션 위치 지표: stats["median"]은 파이프라인이 이미 계산한 값(타깃 포함,
     # per_op=[15.0(타깃),25.0(코스맥스),6.0(한국콜마)]의 중앙값=15.0)을 그대로 재사용한다.
@@ -93,13 +107,17 @@ def test_run_analysis_progress_and_per():
     assert any("밸류에이션 지표의 하나" in c for c in val["caveats"])
 
 
-def test_run_analysis_includes_insights_and_7_steps():
+def test_run_analysis_includes_insights_and_8_steps():
     steps = []
 
     class FakeNews:
         def fetch_all(self, company, stock_name, days=30, now=None):
             return [{"title": "호재", "snippet": "매출↑", "url": "http://n1",
                      "source": "뉴스", "published": None, "kind": "news"}]
+
+        def fetch_industry(self, sector, days=30, now=None):
+            return [{"title": "화장품 업황 개선", "snippet": "수출 호조", "url": "http://i1",
+                     "source": "산업신문", "published": None, "kind": "industry"}]
 
     def fake_insights(items, company, as_of=None):
         return {"status": "ok", "investment_points": [{"text": "매출 성장", "sources": []}],
@@ -109,7 +127,12 @@ def test_run_analysis_includes_insights_and_7_steps():
     res = pipeline.run_analysis("브이티", dart, krx, news=FakeNews(), insights_fn=fake_insights,
                                 progress_cb=lambda s, c, t: steps.append((s, c, t)))
     assert res["insights"]["status"] == "ok"
-    assert steps[-1][2] == 7 and steps[-1][1] == 7
+    assert steps[-1][2] == 8 and steps[-1][1] == 8
+    # FakeKrx.sector_of() -> "화장품" -> 검색어를 뽑을 수 있고(fetch_industry가 주입돼
+    # 있으므로) 업종 동향 아이템이 채워진다.
+    assert res["industry"]["terms"] == ["화장품"]
+    assert len(res["industry"]["items"]) == 1
+    assert res["industry"]["items"][0]["kind"] == "industry"
 
 
 def test_run_analysis_survives_news_failure():

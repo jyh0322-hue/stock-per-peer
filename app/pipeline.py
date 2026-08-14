@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta
 
-from app import company, config, financials, metrics, report, valuation
+from app import company, config, financials, insights, insights_financial, metrics, news_client, report, valuation
 
 
 def _emit(cb, step, cur, total):
@@ -133,7 +133,7 @@ def _resolve_verified_peer(dart, stock_code):
 
 
 def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None):
-    TOTAL = 7
+    TOTAL = 8
     # 1) 종목 해석
     _emit(progress_cb, "종목 해석", 1, TOTAL)
     info = dart.resolve_corp(name)
@@ -221,6 +221,10 @@ def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None)
         except Exception:
             pass
 
+    # 8) 산업 동향 수집(+가능하면 요약) — 실패해도 핵심 결과에는 영향 없음
+    _emit(progress_cb, "산업 동향", 8, TOTAL)
+    industry = _collect_industry(news, deepdive)
+
     all_rows.sort(key=lambda r: (r["per_op"] is None, r["per_op"] if r["per_op"] is not None else 0))
     res = report.build_result(target_row, all_rows, stats, disc, deepdive=deepdive, insights=ins)
     # peer는 지연시간 문제로 TTM PER을 계산하지 않는다(위 5단계 주석 참고) — 프런트가
@@ -229,4 +233,39 @@ def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None)
     # 밸류에이션 위치 지표(사실 서술 전용, 투자의견 아님) — target/peer PER, 마진 변화,
     # 최근 30일 내 고중요도 공시 여부를 종합해 업종 대비 위치를 계산한다.
     res["valuation"] = _assess_valuation(target_row, peer_rows, stats, deepdive, disc)
+    # 재무흐름 인사이트(규칙 기반, LLM/네트워크 불필요) — deepdive 조각이 결측이어도
+    # insights_financial.analyze는 예외 없이 빈/부분 findings를 반환한다.
+    try:
+        res["financial_insight"] = insights_financial.analyze(
+            deepdive.get("income_statement"), deepdive.get("margins"), deepdive.get("trend"))
+    except Exception:
+        res["financial_insight"] = {"headline": "", "findings": [],
+                                    "cost_breakdown": {"cogs_ratio_delta_pp": None,
+                                                       "sga_ratio_delta_pp": None, "driver": None}}
+    res["industry"] = industry
     return res
+
+
+def _collect_industry(news, deepdive):
+    """업종 동향 뉴스 수집(+가능하면 요약). news 클라이언트가 없거나 업종 정보가 없거나
+    검색어를 뽑을 수 없으면(또는 어떤 단계든 예외가 나면) 빈 결과로 저하한다."""
+    industry = {"terms": [], "items": [], "summary": None}
+    if news is None:
+        return industry
+    try:
+        overview = (deepdive or {}).get("overview") or {}
+        sector_val = overview.get("sector") or overview.get("industry")
+        terms = news_client._industry_query_terms(sector_val)
+        if not terms:
+            return industry
+        items = news.fetch_industry(sector_val, days=config.NEWS_WINDOW_DAYS)
+        industry["terms"] = terms
+        industry["items"] = items
+        if items:
+            try:
+                industry["summary"] = insights.summarize_industry(items, sector_val)
+            except Exception:
+                industry["summary"] = None
+    except Exception:
+        return {"terms": [], "items": [], "summary": None}
+    return industry
