@@ -21,6 +21,8 @@
 - 네트워크 호출은 모두 `retry` 래퍼 경유. 순수 계산 모듈은 네트워크·pandas I/O 의존 금지.
 - 비밀키 `OPENDART_API_KEY`는 환경변수/HF Secret에서만 읽고 코드·로그에 남기지 않는다.
 - 커밋은 각 Task 완료 시 1회 이상. TDD 순서(실패 테스트 → 구현 → 통과) 준수.
+- 뉴스·요약 서브시스템(Task 11~13, 스펙 §16): 최근 **30일** 발행분만 대상. 요약 문장마다 출처 인덱스 명기, 수집 자료 밖 내용 금지(환각 금지). 관련 키 미설정/실패는 예외 없이 `status`(`ok|no_data|disabled`)로 흡수.
+- 뉴스 관련 env: `ANTHROPIC_API_KEY`, `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`. requirements에 `anthropic` 추가. httpx는 FastAPI TestClient 의존이므로 requirements에 포함.
 
 ---
 
@@ -67,6 +69,9 @@ pandas
 matplotlib
 requests
 lxml
+python-dotenv
+anthropic
+httpx
 pytest
 ```
 
@@ -91,8 +96,17 @@ docs_cache/
 ```python
 import os
 
+# 프로젝트 루트의 .env 를 읽어 환경변수로 로드(있으면). 이미 설정된 환경변수는 덮어쓰지 않음
+# → 로컬은 .env, 배포(HF Spaces)는 Space Secrets(실제 환경변수)로 같은 코드가 동작.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=False)
+except Exception:
+    pass  # python-dotenv 미설치/‑.env 없음이어도 os.environ 로 동작
+
 PEER_COUNT = 5
 EOK = 1e8  # 원 -> 억원
+NEWS_WINDOW_DAYS = 30
 REPRT = {"Q1": "11013", "HALF": "11012", "Q3": "11014", "ANNUAL": "11011"}
 REPRT_ORDER = ["ANNUAL", "Q3", "HALF", "Q1"]  # 최신성 판단용(누적 범위 큰 순)
 OP_ACCOUNT_IDS = ["dart_OperatingIncomeLoss", "ifrs-full_ProfitLossFromOperatingActivities"]
@@ -100,12 +114,18 @@ REVENUE_ACCOUNT_IDS = ["ifrs-full_Revenue"]
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", ".cache")
 
 
+def env(name):
+    return os.environ.get(name)
+
+
 def api_key():
     key = os.environ.get("OPENDART_API_KEY")
     if not key:
-        raise RuntimeError("환경변수 OPENDART_API_KEY 가 필요합니다.")
+        raise RuntimeError("OPENDART_API_KEY 가 필요합니다. .env 파일 또는 환경변수로 설정하세요.")
     return key
 ```
+
+> `.env` 파일은 프로젝트 루트(`주식/.env`)에 두고 `.gitignore`로 제외한다. 키가 없을 때는 `.env.example`을 복사(`cp .env.example .env`)해 값을 채운다.
 
 - [ ] **Step 5: cache.py 실패 테스트 작성 (`tests/test_cache.py`)**
 
@@ -1719,6 +1739,477 @@ Expected: PASS 또는 실데이터 기반 결과 확인.
 ```bash
 git add Dockerfile README.md tests/test_smoke_live.py
 git commit -m "feat: HF Spaces 배포 산출물 + 실API 스모크 + 문서"
+```
+
+---
+
+## Task 11: news_client.py — 뉴스·블로그 수집 + 최근 1개월 필터
+
+**Files:**
+- Create: `app/news_client.py`, `tests/test_news_client.py`
+- Modify: `requirements.txt` (`anthropic` 추가)
+
+> **변경(2026-08-14)**: 네이버 검색 API 키 발급이 불가하여 **구글 뉴스 RSS를 기본 소스**로, **네이버 뉴스 검색 HTML 크롤링을 보조 소스**로 사용한다. API 키 불필요.
+
+**Interfaces:**
+- Consumes: `config`.
+- Produces:
+  - `parse_rss_date(pubdate: str) -> Optional[datetime]` (RFC1123, 구글뉴스 `<pubDate>`)
+  - `parse_relative_date(text: str, now: datetime) -> Optional[datetime]` ("3일 전"/"2026.08.11." 등 네이버 표기)
+  - `filter_recent(items, days, now) -> List[dict]` (published None/초과 제외)
+  - `dedup(items) -> List[dict]` (정규화 title+url 기준)
+  - `parse_google_rss(xml_text: str) -> List[dict]` (item: `{"title","snippet","url","source","published"}`)
+  - `parse_naver_html(html_text: str, now) -> List[dict]`
+  - `class NewsClient(fetch=None)` — `fetch(url) -> str` 주입해 네트워크 없이 테스트. `fetch_recent(company, stock_name, days=30, now=None) -> List[dict]`
+    - 구글 RSS 우선 수집 → 결과 부족(<5건) 시 네이버 HTML 보조 수집 → 병합·중복제거·1개월 필터·최신순 상한 25건.
+
+- [ ] **Step 1: 실패 테스트 작성 (`tests/test_news_client.py`)**
+
+```python
+from datetime import datetime, timezone, timedelta
+from app import news_client as nc
+
+KST = timezone(timedelta(hours=9))
+
+
+def test_parse_news_date_rfc1123():
+    d = nc.parse_news_date("Mon, 11 Aug 2026 09:30:00 +0900")
+    assert d.year == 2026 and d.month == 8 and d.day == 11
+
+
+def test_parse_blog_date_yyyymmdd():
+    d = nc.parse_blog_date("20260811")
+    assert d.year == 2026 and d.month == 8 and d.day == 11
+
+
+def test_filter_recent_excludes_old_and_undated():
+    now = datetime(2026, 8, 14, tzinfo=KST)
+    items = [
+        {"title": "a", "url": "u1", "published": datetime(2026, 8, 10, tzinfo=KST)},
+        {"title": "b", "url": "u2", "published": datetime(2026, 6, 1, tzinfo=KST)},
+        {"title": "c", "url": "u3", "published": None},
+    ]
+    out = nc.filter_recent(items, days=30, now=now)
+    assert [i["title"] for i in out] == ["a"]
+
+
+def test_dedup_by_title_url():
+    items = [{"title": "속보 A", "url": "u1"}, {"title": "속보  A", "url": "u1"},
+             {"title": "B", "url": "u2"}]
+    assert len(nc.dedup(items)) == 2
+
+
+def test_fetch_recent_maps_and_filters():
+    now = datetime(2026, 8, 14, tzinfo=KST)
+
+    def fake_get(url, params, headers):
+        if "news" in url:
+            return {"items": [
+                {"title": "<b>브이티</b> 실적 호조", "description": "영업익 증가",
+                 "originallink": "http://n1", "pubDate": "Mon, 11 Aug 2026 09:30:00 +0900"},
+                {"title": "옛날 기사", "description": "브이티", "originallink": "http://old",
+                 "pubDate": "Mon, 01 Jun 2026 09:30:00 +0900"},
+            ]}
+        return {"items": [
+            {"title": "브이티 블로그", "description": "리뷰", "link": "http://b1", "postdate": "20260812",
+             "bloggername": "뷰티로그"}]}
+
+    client = nc.NewsClient(get=fake_get)
+    items = client.fetch_recent("브이티", "브이티", days=30, now=now)
+    titles = [i["title"] for i in items]
+    assert "브이티 실적 호조" in titles      # HTML 태그 제거됨
+    assert "옛날 기사" not in titles         # 1개월 초과 제외
+    assert any(i["source"] == "뷰티로그" for i in items)  # 블로그 매핑
+```
+
+- [ ] **Step 2: 테스트 실패 확인**
+
+Run: `python3 -m pytest tests/test_news_client.py -v`
+Expected: FAIL (`app.news_client` 없음).
+
+- [ ] **Step 3: news_client.py 구현**
+
+```python
+import re
+import html
+import os
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
+from typing import List, Optional
+
+import requests
+
+NAVER_NEWS = "https://openapi.naver.com/v1/search/news.json"
+NAVER_BLOG = "https://openapi.naver.com/v1/search/blog.json"
+KST = timezone(timedelta(hours=9))
+
+
+def _strip(s):
+    return html.unescape(re.sub(r"<[^>]+>", "", s or "")).strip()
+
+
+def _norm(s):
+    return re.sub(r"\s+", "", s or "")
+
+
+def parse_news_date(pubdate):
+    try:
+        return parsedate_to_datetime(pubdate)
+    except Exception:
+        return None
+
+
+def parse_blog_date(postdate):
+    try:
+        return datetime.strptime(str(postdate), "%Y%m%d").replace(tzinfo=KST)
+    except Exception:
+        return None
+
+
+def filter_recent(items, days, now):
+    cutoff = now - timedelta(days=days)
+    out = []
+    for it in items:
+        p = it.get("published")
+        if p is None:
+            continue
+        if p.tzinfo is None:
+            p = p.replace(tzinfo=KST)
+        if p >= cutoff:
+            out.append(it)
+    return out
+
+
+def dedup(items):
+    seen, out = set(), []
+    for it in items:
+        k = _norm(it.get("title")) + "|" + (it.get("url") or "")
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(it)
+    return out
+
+
+class NewsClient:
+    def __init__(self, get=None):
+        self._get = get or self._http_get
+
+    def _http_get(self, url, params, headers):
+        r = requests.get(url, params=params, headers=headers, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def _headers(self):
+        cid = os.environ.get("NAVER_CLIENT_ID")
+        csec = os.environ.get("NAVER_CLIENT_SECRET")
+        if not cid or not csec:
+            return None
+        return {"X-Naver-Client-Id": cid, "X-Naver-Client-Secret": csec}
+
+    def fetch_recent(self, company, stock_name, days=30, now=None):
+        now = now or datetime.now(KST)
+        headers = self._headers()
+        if headers is None:
+            return []  # 키 없음 -> 상위에서 status=disabled
+        query = company or stock_name
+        raw = []
+        try:
+            news = self._get(NAVER_NEWS, {"query": query, "display": 30, "sort": "date"}, headers)
+            for it in news.get("items", []):
+                raw.append({"title": _strip(it.get("title")), "snippet": _strip(it.get("description")),
+                            "url": it.get("originallink") or it.get("link"),
+                            "source": "뉴스", "published": parse_news_date(it.get("pubDate"))})
+        except Exception:
+            pass
+        try:
+            blog = self._get(NAVER_BLOG, {"query": query, "display": 20, "sort": "date"}, headers)
+            for it in blog.get("items", []):
+                raw.append({"title": _strip(it.get("title")), "snippet": _strip(it.get("description")),
+                            "url": it.get("link"), "source": _strip(it.get("bloggername")) or "블로그",
+                            "published": parse_blog_date(it.get("postdate"))})
+        except Exception:
+            pass
+        # 관련성: 제목/스니펫에 회사명 포함
+        key = _norm(company or stock_name)
+        rel = [i for i in raw if key in _norm(i["title"]) or key in _norm(i["snippet"])]
+        recent = filter_recent(rel, days, now)
+        recent = dedup(recent)
+        recent.sort(key=lambda i: i["published"], reverse=True)
+        return recent[:25]
+```
+
+- [ ] **Step 4: 테스트 통과 확인**
+
+Run: `python3 -m pytest tests/test_news_client.py -v`
+Expected: PASS (5 passed).
+
+- [ ] **Step 5: requirements.txt에 `anthropic` 추가 후 커밋**
+
+```bash
+git add app/news_client.py tests/test_news_client.py requirements.txt
+git commit -m "feat: news_client — 뉴스/블로그 수집 + 최근 1개월 필터"
+```
+
+---
+
+## Task 12: insights.py — Claude 투자포인트·리스크 요약
+
+**Files:**
+- Create: `app/insights.py`, `tests/test_insights.py`
+
+**Interfaces:**
+- Consumes: `news_client` 아이템.
+- Produces:
+  - `build_prompt(company: str, items: List[dict]) -> str` (번호 매긴 항목 목록)
+  - `summarize(items: List[dict], company: str, claude=None, as_of=None) -> dict` — `claude(prompt)->str`(JSON 문자열) 주입 가능. 반환 스키마는 스펙 §16.5.
+  - `status`: 자료 0건 → `no_data`, claude 없음/오류 → `disabled`, 정상 → `ok`.
+
+- [ ] **Step 1: 실패 테스트 작성 (`tests/test_insights.py`)**
+
+```python
+from app import insights
+
+
+def _items():
+    return [
+        {"title": "브이티 2분기 영업익 급증", "snippet": "북미 매출 확대", "url": "http://n1",
+         "source": "뉴스", "published": None},
+        {"title": "브이티 밸류 부담 지적", "snippet": "PER 고평가 우려", "url": "http://n2",
+         "source": "뉴스", "published": None},
+    ]
+
+
+def test_no_data_status():
+    res = insights.summarize([], company="브이티")
+    assert res["status"] == "no_data"
+
+
+def test_disabled_when_no_claude():
+    # claude 미주입 + 키 없음 -> disabled, 원문은 sources로 노출
+    res = insights.summarize(_items(), company="브이티", claude=lambda p: (_ for _ in ()).throw(RuntimeError()))
+    assert res["status"] == "disabled"
+    assert len(res["sources"]) == 2
+
+
+def test_summarize_maps_sources():
+    fake_json = ('{"investment_points":[{"text":"북미 매출 확대","sources":[1]}],'
+                 '"risks":[{"text":"밸류 부담","sources":[2]}],"overall":"중립"}')
+    res = insights.summarize(_items(), company="브이티", claude=lambda p: fake_json, as_of="2026-08-14")
+    assert res["status"] == "ok"
+    assert res["investment_points"][0]["sources"][0]["url"] == "http://n1"
+    assert res["risks"][0]["sources"][0]["url"] == "http://n2"
+    assert res["as_of"] == "2026-08-14"
+```
+
+- [ ] **Step 2: 테스트 실패 확인**
+
+Run: `python3 -m pytest tests/test_insights.py -v`
+Expected: FAIL (`app.insights` 없음).
+
+- [ ] **Step 3: insights.py 구현**
+
+```python
+import os
+import json
+from typing import List, Optional
+
+SYSTEM = (
+    "너는 한국 주식 뉴스 요약 애널리스트다. 아래 번호가 매겨진 뉴스/블로그 항목만 근거로 "
+    "투자포인트와 리스크를 한국어로 정리한다. 규칙: (1) 제공 항목에만 근거 (2) 각 포인트/리스크에 "
+    "근거 항목 번호를 sources 배열로 명기 (3) 자료에 없으면 항목을 만들지 말 것 (4) 매수/매도 권유·목표주가 "
+    "단정 금지, 사실·전망을 중립 서술 (5) 반드시 JSON만 출력."
+)
+
+
+def _src_obj(item, n):
+    return {"n": n, "title": item.get("title"), "source": item.get("source"),
+            "date": item["published"].strftime("%Y-%m-%d") if item.get("published") else "",
+            "url": item.get("url")}
+
+
+def build_prompt(company, items):
+    lines = ["[대상 종목] %s" % company, "", "[항목]"]
+    for i, it in enumerate(items, 1):
+        lines.append("%d. (%s) %s — %s" % (i, it.get("source"), it.get("title"), it.get("snippet")))
+    lines.append("")
+    lines.append('출력 JSON 스키마: {"investment_points":[{"text","sources":[번호]}],'
+                 '"risks":[{"text","sources":[번호]}],"overall":"2~3문장"}')
+    return "\n".join(lines)
+
+
+def _default_claude(prompt):
+    import anthropic
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise RuntimeError("no ANTHROPIC_API_KEY")
+    client = anthropic.Anthropic(api_key=key)
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001", max_tokens=1500,
+        system=SYSTEM, messages=[{"role": "user", "content": prompt}])
+    return msg.content[0].text
+
+
+def _all_sources(items):
+    return [_src_obj(it, i) for i, it in enumerate(items, 1)]
+
+
+def summarize(items, company, claude=None, as_of=None):
+    sources = _all_sources(items)
+    base = {"as_of": as_of, "window_days": 30, "investment_points": [], "risks": [],
+            "overall": "", "sources": sources}
+    if not items:
+        base["status"] = "no_data"
+        return base
+    runner = claude or _default_claude
+    try:
+        raw = runner(build_prompt(company, items))
+        parsed = json.loads(raw)
+    except Exception:
+        base["status"] = "disabled"
+        return base
+
+    def _map(points):
+        out = []
+        for p in points or []:
+            srcs = [sources[n - 1] for n in p.get("sources", []) if 1 <= n <= len(sources)]
+            out.append({"text": p.get("text", ""), "sources": srcs})
+        return out
+
+    base["investment_points"] = _map(parsed.get("investment_points"))
+    base["risks"] = _map(parsed.get("risks"))
+    base["overall"] = parsed.get("overall", "")
+    base["status"] = "ok"
+    return base
+```
+
+- [ ] **Step 4: 테스트 통과 확인**
+
+Run: `python3 -m pytest tests/test_insights.py -v`
+Expected: PASS (3 passed).
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add app/insights.py tests/test_insights.py
+git commit -m "feat: insights — Claude 투자포인트/리스크 요약 + 출처 매핑"
+```
+
+---
+
+## Task 13: 편입 — 파이프라인 6단계 · 리포트 · 프론트 섹션
+
+**Files:**
+- Modify: `app/pipeline.py`, `app/report.py`, `app/main.py`(팩토리에 news/insights 주입), `web/app.js`, `web/styles.css`, `app/config.py`(NEWS_WINDOW_DAYS=30)
+- Modify: `tests/test_pipeline.py` (6단계 + insights 주입 검증)
+
+**Interfaces:**
+- Consumes: `NewsClient`, `insights`.
+- Produces: `run_analysis(..., news=None, insights_fn=None)` — 주입 가능. `build_result(..., insights=None)`에 `insights` 키 추가. 진행률 total 5→6.
+
+- [ ] **Step 1: 실패 테스트 수정 (`tests/test_pipeline.py`)**
+
+기존 테스트에 뉴스/요약 주입과 6단계 검증을 추가한다(기존 `_sample` 흐름 유지, `run_analysis` 시그니처에 `news`, `insights_fn` 추가).
+
+```python
+def test_run_analysis_includes_insights_and_6_steps():
+    from app import pipeline
+    steps = []
+
+    class FakeNews:
+        def fetch_recent(self, company, stock_name, days=30, now=None):
+            return [{"title": "호재", "snippet": "매출↑", "url": "http://n1",
+                     "source": "뉴스", "published": None}]
+
+    def fake_insights(items, company, as_of=None):
+        return {"status": "ok", "investment_points": [{"text": "매출 성장", "sources": []}],
+                "risks": [], "overall": "중립", "sources": [], "as_of": as_of, "window_days": 30}
+
+    # FakeDart/FakeKrx 는 기존 테스트 것을 재사용
+    dart, krx = _make_fakes()  # 기존 헬퍼 (없으면 test 상단 fixture 재사용)
+    res = pipeline.run_analysis("브이티", dart, krx, news=FakeNews(), insights_fn=fake_insights,
+                                progress_cb=lambda s, c, t: steps.append((s, c, t)))
+    assert res["insights"]["status"] == "ok"
+    assert steps[-1][2] == 6 and steps[-1][1] == 6
+```
+
+> 주: `_make_fakes()`가 기존 파일에 없으면, 기존 `FakeDart`/`FakeKrx`를 모듈 상단으로 올려 재사용하도록 소폭 리팩터. 새 헬퍼는 기존 fake와 동일 동작이어야 한다.
+
+- [ ] **Step 2: 테스트 실패 확인**
+
+Run: `python3 -m pytest tests/test_pipeline.py -v`
+Expected: FAIL (`run_analysis`에 news/insights 인자 없음, `insights` 키 없음).
+
+- [ ] **Step 3: pipeline.py 수정 — 6단계 편입**
+
+`config.py`에 `NEWS_WINDOW_DAYS = 30` 추가. `run_analysis` 시그니처와 마지막 단계를 아래처럼 변경.
+
+```python
+def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None):
+    TOTAL = 6
+    # ... 1~4 단계 동일 (TOTAL만 6으로) ...
+
+    # 5) 공시
+    _emit(progress_cb, "공시 수집", 5, TOTAL)
+    disc = dart.recent_disclosures(info["corp_code"])
+
+    # 6) 뉴스·블로그 투자포인트/리스크 요약
+    _emit(progress_cb, "뉴스·요약", 6, TOTAL)
+    ins = {"status": "disabled", "investment_points": [], "risks": [],
+           "overall": "", "sources": [], "as_of": None, "window_days": 30}
+    if news is not None and insights_fn is not None:
+        try:
+            items = news.fetch_recent(info["corp_name"], info["corp_name"])
+            ins = insights_fn(items, info["corp_name"])
+        except Exception:
+            pass
+
+    all_rows.sort(key=lambda r: (r["per_op"] is None, r["per_op"] if r["per_op"] is not None else 0))
+    return report.build_result(target_row, all_rows, stats, disc, deepdive=None, insights=ins)
+```
+
+- [ ] **Step 4: report.py 수정 — build_result/render_html에 insights 반영**
+
+`build_result` 시그니처에 `insights=None` 추가, 반환 dict에 `"insights": insights` 포함. `render_html`에 투자포인트/리스크 섹션(출처 각주) 추가.
+
+```python
+def build_result(target, peers, stats, disclosures, deepdive, insights=None):
+    return {
+        "target": target, "peers": peers, "stats": stats,
+        "disclosures": disclosures or [], "deepdive": deepdive,
+        "insights": insights or {"status": "disabled"},
+        "chart_per_b64": per_bar_chart_b64(peers, target["stock_code"], stats.get("median")),
+    }
+```
+
+`render_html`에 추가할 블록(요지): `insights.status == "ok"` 이면 투자포인트/리스크 `<ul>` + 각 항목 뒤 출처 `[n]`, 하단 `sources` 목록(제목·매체·날짜·링크). `no_data`/`disabled`면 안내 문구.
+
+- [ ] **Step 5: main.py 팩토리 수정 — news/insights 주입**
+
+```python
+def _default_factory():
+    from app.dart_client import DartClient
+    from app.krx_client import KrxClient
+    from app.news_client import NewsClient
+    from app import insights
+    return DartClient(), KrxClient(), NewsClient(), insights.summarize
+```
+`_run_job`에서 `dart, krx, news, insights_fn = CLIENT_FACTORY()` 후 `pipeline.run_analysis(name, dart, krx, news=news, insights_fn=insights_fn, progress_cb=...)`. `analyze`의 400 검증은 `CLIENT_FACTORY()[0]` 사용. (기존 test_main의 FakeFactory도 4-튜플 반환하도록 업데이트.)
+
+- [ ] **Step 6: web/app.js·styles.css — 투자포인트/리스크 섹션 렌더**
+
+`render(res)`에 `res.insights` 처리 추가: 투자포인트(초록 계열)·리스크(주황 계열) 목록, 각 문장 뒤 출처 `[n]`(툴팁/링크), 하단 출처 리스트. `status`가 ok가 아니면 "최근 1개월 자료 없음/요약 비활성" 안내.
+
+- [ ] **Step 7: 전체 테스트 통과 확인**
+
+Run: `python3 -m pytest -v`
+Expected: 전체 PASS(네트워크 없는 테스트), 라이브 스모크 SKIP.
+
+- [ ] **Step 8: 커밋**
+
+```bash
+git add app/pipeline.py app/report.py app/main.py app/config.py web/app.js web/styles.css tests/test_pipeline.py
+git commit -m "feat: 뉴스·요약 파이프라인 6단계 편입 + 결과 섹션"
 ```
 
 ---

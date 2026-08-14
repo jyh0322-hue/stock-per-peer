@@ -1,0 +1,114 @@
+:root{
+  --bg:#f4f6fb; --panel:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+  --brand:#1d4ed8; --brand-soft:#eaf0ff; --target:#e11d48; --target-soft:#fff1f4;
+  --good:#059669; --warn:#d97706; --head:#f8fafc; --chip:#5b8cff;
+  --shadow:0 1px 3px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.06);
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0d1017;--panel:#151a22;--fg:#e6e9ef;--muted:#9aa3b2;--line:#252b36;
+    --brand:#5b8cff;--brand-soft:#1a2440;--target:#fb7185;--target-soft:#2a1720;
+    --good:#34d399;--warn:#fbbf24;--head:#1b212b;--chip:#3b6ae0;
+    --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",Roboto,sans-serif;line-height:1.55}
+.page{max-width:1080px;margin:0 auto;padding:28px 20px 80px}
+.hidden{display:none !important}
+
+/* 검색 */
+.brand-row{display:flex;align-items:baseline;gap:10px}
+h1{font-size:1.55rem;margin:0}
+.sub{color:var(--muted);font-size:.9rem;margin:6px 0 22px}
+.searchbar{display:flex;gap:10px;max-width:620px}
+.searchbar input{flex:1;padding:13px 16px;border:1.5px solid var(--line);border-radius:12px;
+  font-size:1rem;background:var(--panel);color:var(--fg)}
+.searchbar input:focus{outline:none;border-color:var(--brand)}
+.btn{padding:13px 22px;border:0;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;font-size:1rem;cursor:pointer}
+.btn:disabled{opacity:.6;cursor:default}
+.examples{margin-top:14px;color:var(--muted);font-size:.85rem}
+.tagpill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:3px 12px;margin:0 6px 6px 0;font-size:.82rem;cursor:pointer;background:var(--panel);color:var(--fg)}
+.tagpill:hover{border-color:var(--brand);color:var(--brand)}
+
+.error{background:var(--target-soft);color:var(--target);border:1px solid var(--target);border-radius:12px;
+  padding:12px 16px;margin:14px 0;font-size:.9rem;max-width:620px}
+
+/* 진행 */
+.prog-wrap{max-width:620px}
+.bar{height:10px;background:var(--line);border-radius:8px;overflow:hidden}
+.fill{height:100%;width:0%;background:linear-gradient(90deg,var(--brand),var(--chip));border-radius:8px;transition:width .3s}
+.steps{list-style:none;padding:0;margin:20px 0 0;display:grid;gap:10px}
+.steps li{display:flex;align-items:center;gap:11px;font-size:.92rem;color:var(--muted)}
+.steps li .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:.72rem;flex:none;
+  border:1.5px solid var(--line);background:var(--panel)}
+.steps li.done{color:var(--fg)} .steps li.done .ic{background:var(--good);border-color:var(--good);color:#fff}
+.steps li.now{color:var(--fg);font-weight:600} .steps li.now .ic{border-color:var(--brand);color:var(--brand)}
+.spin{width:12px;height:12px;border:2px solid var(--brand);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.prog-caption{margin-top:16px;font-size:.86rem;color:var(--muted)}
+.prog-caption b{color:var(--fg)}
+
+/* 결과 */
+.result-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.result-head h1{font-size:1.5rem}
+.code{color:var(--muted);font-size:1rem}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0 8px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:15px 16px}
+.kpi .lab{font-size:.78rem;color:var(--muted)}
+.kpi .val{font-size:1.5rem;font-weight:800;margin-top:4px;letter-spacing:-.01em}
+.kpi .val small{font-size:.9rem;font-weight:600;color:var(--muted)}
+.kpi.hl{background:var(--target-soft);border-color:var(--target)}
+.kpi.hl .val{color:var(--target)}
+.kpi .note{font-size:.8rem;margin-top:4px}
+.note.good{color:var(--good)} .note.warn{color:var(--warn)} .note.muted{color:var(--muted)}
+
+h2{font-size:1.08rem;margin:34px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--brand);display:inline-block}
+h2 .hint{font-size:.8rem;color:var(--muted);font-weight:500}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:8px 4px}
+
+.table-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap;text-align:left}
+th{background:var(--head);color:var(--muted);font-size:.78rem;font-weight:600}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tr.target td{background:var(--target-soft);font-weight:700}
+tr.target td:first-child::before{content:"★ ";color:var(--target)}
+.badge-under{color:var(--good);font-weight:700}
+.badge-over{color:var(--warn);font-weight:700}
+
+img.chart{width:100%;display:block;border-radius:10px}
+.chart-card{padding:14px}
+
+.disc{list-style:none;padding:0;margin:6px 0 0}
+.disc li{display:flex;align-items:center;gap:10px;padding:10px 6px;border-bottom:1px solid var(--line);font-size:.9rem}
+.disc li:last-child{border-bottom:0}
+.disc .d{color:var(--muted);font-variant-numeric:tabular-nums;width:78px;flex:none}
+.disc .t{flex:1}
+.disc .type{font-size:.72rem;color:#fff;border-radius:6px;padding:2px 8px;flex:none}
+.type.reg{background:#64748b}.type.major{background:#d97706}.type.issue{background:#7c3aed}.type.etc{background:#94a3b8}
+
+/* 투자포인트·리스크 */
+.ins-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.ins-card{padding:16px 18px;border-left:4px solid var(--line)}
+.ins-card.ins-good{border-left-color:var(--good)}
+.ins-card.ins-warn{border-left-color:var(--warn)}
+.ins-card ul{margin:0;padding-left:18px;font-size:.9rem}
+.ins-card li{margin:4px 0}
+.ins-title{font-weight:700;margin-bottom:8px}
+.ins-title.good{color:var(--good)}
+.ins-title.warn{color:var(--warn)}
+.src-ref{color:var(--brand);font-size:.78em}
+.src-list{margin-top:12px;padding:12px 16px;font-size:.82rem;color:var(--muted)}
+.src-list a{color:var(--brand);word-break:break-all}
+.ins-empty{padding:14px 16px;color:var(--muted);font-size:.88rem}
+
+@media (max-width:720px){
+  .ins-grid{grid-template-columns:1fr}
+}
+
+.disclaimer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:.8rem}
+
+@media (max-width:720px){
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .page{padding:20px 14px 60px}
+}

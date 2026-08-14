@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.cache/
+docs_cache/
+.DS_Store
+.env
+*.env
+.superpowers/
+브이티/
