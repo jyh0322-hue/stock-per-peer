@@ -1,1 +1,51 @@
-<!doctype html><meta charset="utf-8"><title>DART PER</title><h1>ok</h1>
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DART 종목 PER·PEER 분석</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div class="page">
+
+  <section id="view-search" class="view">
+    <div class="brand-row"><h1>📊 종목 PER·PEER 분석</h1></div>
+    <p class="sub">DART 공시·재무와 KRX 시세를 결합해 연환산 영업이익 기준 PER을 계산하고, 동일 업종 시총 상위 5개와 비교합니다.</p>
+    <div id="error" class="error hidden"></div>
+    <form id="f" class="searchbar">
+      <input id="q" placeholder="종목명 입력 (예: 브이티, 삼성전자, 코스맥스)" autocomplete="off">
+      <button type="submit" class="btn">분석</button>
+    </form>
+    <div class="examples">인기 검색:
+      <span class="tagpill" data-name="브이티">브이티</span><span class="tagpill" data-name="아모레퍼시픽">아모레퍼시픽</span><span class="tagpill" data-name="에코프로비엠">에코프로비엠</span><span class="tagpill" data-name="한미반도체">한미반도체</span>
+    </div>
+  </section>
+
+  <section id="view-progress" class="view hidden">
+    <div class="brand-row"><h1>📊 종목 PER·PEER 분석</h1></div>
+    <div class="searchbar" style="margin:14px 0 28px">
+      <input id="q-echo" readonly>
+      <button class="btn" disabled>분석 중…</button>
+    </div>
+    <div class="prog-wrap">
+      <div class="bar"><div class="fill" id="fill"></div></div>
+      <p class="prog-caption" id="prog-caption"></p>
+      <ul class="steps" id="steps">
+        <li data-step="1"><span class="ic">·</span><span class="label">종목 해석</span></li>
+        <li data-step="2"><span class="ic">·</span><span class="label">업종·시총 조회</span></li>
+        <li data-step="3"><span class="ic">·</span><span class="label">PEER 실적 수집</span></li>
+        <li data-step="4"><span class="ic">·</span><span class="label">PER 계산</span></li>
+        <li data-step="5"><span class="ic">·</span><span class="label">공시·결과 조립</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="view-result" class="view hidden">
+    <div id="result"></div>
+  </section>
+
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
