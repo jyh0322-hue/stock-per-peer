@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DART 종목 PER·PEER 분석 — 화면 시안</title>
+<style>
+  :root{
+    --bg:#f4f6fb; --panel:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+    --brand:#1d4ed8; --brand-soft:#eaf0ff; --target:#e11d48; --target-soft:#fff1f4;
+    --good:#059669; --warn:#d97706; --head:#f8fafc; --chip:#5b8cff;
+    --shadow:0 1px 3px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#0d1017;--panel:#151a22;--fg:#e6e9ef;--muted:#9aa3b2;--line:#252b36;
+      --brand:#5b8cff;--brand-soft:#1a2440;--target:#fb7185;--target-soft:#2a1720;
+      --good:#34d399;--warn:#fbbf24;--head:#1b212b;--chip:#3b6ae0;
+      --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",Roboto,sans-serif;line-height:1.55}
+  .page{max-width:1080px;margin:0 auto;padding:28px 20px 80px}
+  .doc-title{font-size:1.1rem;color:var(--muted);font-weight:600;letter-spacing:.02em;margin:6px 0 22px}
+  .state-label{display:flex;align-items:center;gap:10px;margin:38px 0 12px;font-weight:700;font-size:.95rem;color:var(--brand)}
+  .state-label .n{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;
+    background:var(--brand);color:#fff;font-size:.78rem}
+  .state-label .hint{color:var(--muted);font-weight:500;font-size:.82rem}
+
+  .frame{background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}
+  .browserbar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--head);border-bottom:1px solid var(--line)}
+  .dot{width:11px;height:11px;border-radius:50%}
+  .dot.r{background:#ff5f57}.dot.y{background:#febc2e}.dot.g{background:#28c840}
+  .url{margin-left:8px;font-size:.78rem;color:var(--muted);background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:4px 12px}
+  .body{padding:30px 34px 36px}
+
+  /* 검색 */
+  .brand-row{display:flex;align-items:baseline;gap:10px}
+  h1{font-size:1.55rem;margin:0}
+  .sub{color:var(--muted);font-size:.9rem;margin:6px 0 22px}
+  .searchbar{display:flex;gap:10px;max-width:620px}
+  .searchbar input{flex:1;padding:13px 16px;border:1.5px solid var(--line);border-radius:12px;
+    font-size:1rem;background:var(--panel);color:var(--fg)}
+  .searchbar input:focus{outline:none;border-color:var(--brand)}
+  .btn{padding:13px 22px;border:0;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;font-size:1rem;cursor:pointer}
+  .examples{margin-top:14px;color:var(--muted);font-size:.85rem}
+  .examples b{color:var(--fg)}
+  .tagpill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:3px 12px;margin:0 6px 6px 0;font-size:.82rem}
+
+  /* 진행 */
+  .prog-wrap{max-width:620px}
+  .bar{height:10px;background:var(--line);border-radius:8px;overflow:hidden}
+  .fill{height:100%;width:60%;background:linear-gradient(90deg,var(--brand),var(--chip));border-radius:8px}
+  .steps{list-style:none;padding:0;margin:20px 0 0;display:grid;gap:10px}
+  .steps li{display:flex;align-items:center;gap:11px;font-size:.92rem;color:var(--muted)}
+  .steps li .ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:.72rem;
+    border:1.5px solid var(--line);background:var(--panel)}
+  .steps li.done{color:var(--fg)} .steps li.done .ic{background:var(--good);border-color:var(--good);color:#fff}
+  .steps li.now{color:var(--fg);font-weight:600} .steps li.now .ic{border-color:var(--brand);color:var(--brand)}
+  .spin{width:12px;height:12px;border:2px solid var(--brand);border-top-color:transparent;border-radius:50%}
+  .prog-caption{margin-top:16px;font-size:.86rem;color:var(--muted)}
+
+  /* 결과 */
+  .result-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .result-head h1{font-size:1.5rem}
+  .code{color:var(--muted);font-size:1rem}
+  .sector-chip{background:var(--brand-soft);color:var(--brand);border-radius:8px;padding:3px 10px;font-size:.8rem;font-weight:600}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0 8px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:15px 16px}
+  .kpi .lab{font-size:.78rem;color:var(--muted)}
+  .kpi .val{font-size:1.5rem;font-weight:800;margin-top:4px;letter-spacing:-.01em}
+  .kpi .val small{font-size:.9rem;font-weight:600;color:var(--muted)}
+  .kpi.hl{background:var(--target-soft);border-color:var(--target)}
+  .kpi.hl .val{color:var(--target)}
+  .kpi .note{font-size:.8rem;margin-top:4px}
+  .note.good{color:var(--good)} .note.warn{color:var(--warn)}
+
+  h2{font-size:1.08rem;margin:34px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--brand);display:inline-block}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:8px 4px}
+
+  table{width:100%;border-collapse:collapse;font-size:.9rem}
+  th,td{padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap;text-align:left}
+  th{background:var(--head);color:var(--muted);font-size:.78rem;font-weight:600}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr.target td{background:var(--target-soft);font-weight:700}
+  tr.target td:first-child::before{content:"★ ";color:var(--target)}
+  .badge-under{color:var(--good);font-weight:700}
+  .badge-over{color:var(--warn);font-weight:700}
+
+  /* PER 차트 (CSS 막대) */
+  .chart{padding:18px 10px 8px}
+  .chart .row{display:grid;grid-template-columns:120px 1fr 60px;align-items:center;gap:12px;margin:9px 0}
+  .chart .name{font-size:.86rem;text-align:right;color:var(--muted)}
+  .chart .track{background:var(--head);border-radius:7px;height:26px;position:relative;overflow:hidden}
+  .chart .barfill{height:100%;border-radius:7px;background:var(--brand)}
+  .chart .row.target .barfill{background:var(--target)}
+  .chart .row.target .name{color:var(--target);font-weight:700}
+  .chart .pv{font-size:.86rem;font-weight:700;font-variant-numeric:tabular-nums}
+  .median-line{position:relative;height:0;margin:2px 0 10px 132px}
+  .median-line span{position:absolute;top:-8px;font-size:.74rem;color:var(--muted);border-left:2px dashed var(--muted);padding-left:6px;height:170px}
+
+  .disc{list-style:none;padding:0;margin:6px 0 0}
+  .disc li{display:flex;align-items:center;gap:10px;padding:10px 6px;border-bottom:1px solid var(--line);font-size:.9rem}
+  .disc .d{color:var(--muted);font-variant-numeric:tabular-nums;width:78px;flex:none}
+  .disc .t{flex:1}
+  .disc .type{font-size:.72rem;color:#fff;border-radius:6px;padding:2px 8px;flex:none}
+  .type.reg{background:#64748b}.type.major{background:#d97706}.type.issue{background:#7c3aed}.type.etc{background:#94a3b8}
+  .disc .corp{font-size:.78rem;color:var(--muted);flex:none}
+
+  .disclaimer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:.8rem}
+
+  @media (max-width:720px){
+    .kpis{grid-template-columns:repeat(2,1fr)}
+    .chart .row{grid-template-columns:84px 1fr 48px}
+    .body{padding:22px 18px}
+    table{display:block;overflow-x:auto}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="doc-title">DART 종목 PER·PEER 분석 웹앱 — 화면 디자인 시안 (Mockup)</div>
+
+  <!-- ================= 상태 1: 검색 ================= -->
+  <div class="state-label"><span class="n">1</span> 검색 화면 <span class="hint">첫 진입 · 종목명 입력</span></div>
+  <div class="frame">
+    <div class="browserbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="url">https://&lt;user&gt;-stock-per.hf.space</span></div>
+    <div class="body">
+      <div class="brand-row"><h1>📊 종목 PER·PEER 분석</h1></div>
+      <p class="sub">DART 공시·재무와 KRX 시세를 결합해 연환산 영업이익 기준 PER을 계산하고, 동일 업종 시총 상위 5개와 비교합니다.</p>
+      <div class="searchbar">
+        <input placeholder="종목명 입력 (예: 브이티, 삼성전자, 코스맥스)" value="">
+        <button class="btn">분석</button>
+      </div>
+      <div class="examples">인기 검색:
+        <span class="tagpill">브이티</span><span class="tagpill">아모레퍼시픽</span>
+        <span class="tagpill">에코프로비엠</span><span class="tagpill">한미반도체</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 상태 2: 진행 ================= -->
+  <div class="state-label"><span class="n">2</span> 분석 진행 화면 <span class="hint">비동기 잡 · 진행률 폴링(1~2초)</span></div>
+  <div class="frame">
+    <div class="browserbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="url">https://&lt;user&gt;-stock-per.hf.space</span></div>
+    <div class="body">
+      <div class="brand-row"><h1>📊 종목 PER·PEER 분석</h1></div>
+      <div class="searchbar" style="margin:14px 0 28px">
+        <input value="브이티" readonly><button class="btn">분석</button>
+      </div>
+      <div class="prog-wrap">
+        <div class="bar"><div class="fill"></div></div>
+        <p class="prog-caption"><b>PER 계산 중</b> · 3/5 단계 (60%)</p>
+        <ul class="steps">
+          <li class="done"><span class="ic">✓</span> 종목 해석 — 브이티(018290) · 화장품</li>
+          <li class="done"><span class="ic">✓</span> 업종·시총 조회 — PEER 5종목 확정</li>
+          <li class="now"><span class="ic"><span class="spin"></span></span> PEER 실적 수집 (3/5)</li>
+          <li><span class="ic">·</span> PER 계산</li>
+          <li><span class="ic">·</span> 공시·결과 조립</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 상태 3: 결과 ================= -->
+  <div class="state-label"><span class="n">3</span> 결과 화면 <span class="hint">KPI · PEER 비교 · PER 차트 · 최근 공시</span></div>
+  <div class="frame">
+    <div class="browserbar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="url">https://&lt;user&gt;-stock-per.hf.space</span></div>
+    <div class="body">
+      <div class="result-head">
+        <h1>브이티</h1><span class="code">(018290)</span>
+        <span class="sector-chip">업종 · 화장품</span>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi"><div class="lab">시가총액</div><div class="val">3,200<small> 억</small></div></div>
+        <div class="kpi"><div class="lab">최근 분기 영업이익</div><div class="val">85<small> 억 (2026 반기)</small></div></div>
+        <div class="kpi hl"><div class="lab">PER (영업이익 기준·연환산)</div><div class="val">9.4<small> 배</small></div>
+          <div class="note good">업종 중앙값 8.9배 대비 소폭 고평가</div></div>
+        <div class="kpi"><div class="lab">업종 내 순위</div><div class="val">4<small> / 6</small></div>
+          <div class="note">PER 낮을수록 상위</div></div>
+      </div>
+
+      <h2>업종 PEER 비교 <span style="font-size:.8rem;color:var(--muted);font-weight:500">시총 상위 5 + 타깃</span></h2>
+      <div class="card">
+        <table>
+          <thead><tr>
+            <th>종목</th><th class="num">시총(억)</th><th class="num">최근분기 영업익(억)</th>
+            <th class="num">연환산(억)</th><th class="num">PER(영업이익)</th><th class="num">KRX PER</th>
+          </tr></thead>
+          <tbody>
+            <tr><td>한국콜마 <span class="code">161890</span></td><td class="num">12,000</td><td class="num">380</td><td class="num">1,520</td><td class="num badge-under">7.9</td><td class="num">9.1</td></tr>
+            <tr><td>LG생활건강 <span class="code">051900</span></td><td class="num">52,000</td><td class="num">1,500</td><td class="num">6,000</td><td class="num badge-under">8.7</td><td class="num">10.4</td></tr>
+            <tr><td>코스맥스 <span class="code">192820</span></td><td class="num">15,000</td><td class="num">420</td><td class="num">1,680</td><td class="num">8.9</td><td class="num">9.6</td></tr>
+            <tr class="target"><td>브이티 <span class="code">018290</span></td><td class="num">3,200</td><td class="num">85</td><td class="num">340</td><td class="num">9.4</td><td class="num">11.2</td></tr>
+            <tr><td>아모레퍼시픽 <span class="code">090430</span></td><td class="num">78,000</td><td class="num">900</td><td class="num">3,600</td><td class="num badge-over">21.7</td><td class="num">24.3</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>PER 비교 차트</h2>
+      <div class="card chart">
+        <div class="row"><div class="name">한국콜마</div><div class="track"><div class="barfill" style="width:36%"></div></div><div class="pv">7.9</div></div>
+        <div class="row"><div class="name">LG생활건강</div><div class="track"><div class="barfill" style="width:40%"></div></div><div class="pv">8.7</div></div>
+        <div class="row"><div class="name">코스맥스</div><div class="track"><div class="barfill" style="width:41%"></div></div><div class="pv">8.9</div></div>
+        <div class="row target"><div class="name">브이티 ★</div><div class="track"><div class="barfill" style="width:43%"></div></div><div class="pv">9.4</div></div>
+        <div class="row"><div class="name">아모레퍼시픽</div><div class="track"><div class="barfill" style="width:100%"></div></div><div class="pv">21.7</div></div>
+        <div class="median-line"><span>업종 중앙값 8.9배</span></div>
+      </div>
+
+      <h2>최근 공시 <span style="font-size:.8rem;color:var(--muted);font-weight:500">타깃 + PEER · 최근 90일</span></h2>
+      <ul class="disc">
+        <li><span class="d">2026-08-10</span><span class="t">반기보고서</span><span class="type reg">정기공시</span><span class="corp">브이티</span></li>
+        <li><span class="d">2026-08-05</span><span class="t">주요사항보고서(유상증자결정)</span><span class="type major">주요사항</span><span class="corp">코스맥스</span></li>
+        <li><span class="d">2026-07-28</span><span class="t">단일판매·공급계약체결</span><span class="type issue">발행공시</span><span class="corp">한국콜마</span></li>
+        <li><span class="d">2026-07-22</span><span class="t">반기보고서</span><span class="type reg">정기공시</span><span class="corp">아모레퍼시픽</span></li>
+        <li><span class="d">2026-07-15</span><span class="t">자기주식취득 신탁계약 체결결정</span><span class="type major">주요사항</span><span class="corp">LG생활건강</span></li>
+      </ul>
+
+      <div class="disclaimer">
+        ※ OpenDART·KRX 데이터를 자동 집계한 자료로, 투자자문·매매판단을 제공하지 않습니다.
+        PER(영업이익 기준, 연환산) = 시가총액 ÷ (최근 분기 영업이익 × 4). 영업이익 적자 종목은 N/A로 표기됩니다.
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
