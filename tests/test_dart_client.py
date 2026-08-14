@@ -1,7 +1,7 @@
 from datetime import date
 
 import pandas as pd
-from app.dart_client import DartClient
+from app.dart_client import DartClient, classify_disclosures
 
 
 class FakeReader:
@@ -190,3 +190,42 @@ def test_resolve_corp_unlisted_raises_lookup_error():
         assert False, "예외가 발생해야 함"
     except LookupError as e:
         assert "상장" in str(e)
+
+
+# ---- 공시 분류(importance/category/url) ------------------------------------
+
+def test_classify_disclosures_high_importance_capital_raise():
+    items = [{"date": "20260810", "title": "주요사항보고서(유상증자결정)", "rcept_no": "42"}]
+    out = classify_disclosures(items)
+    assert out[0]["importance"] == "high"
+    assert out[0]["category"] == "증자·사채"
+    assert out[0]["url"] == "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=42"
+    # 기존 필드는 보존
+    assert out[0]["date"] == "20260810"
+
+
+def test_classify_disclosures_regular_periodic_report_is_normal():
+    items = [{"date": "20260810", "title": "반기보고서", "rcept_no": "1"}]
+    out = classify_disclosures(items)
+    assert out[0]["importance"] == "normal"
+    assert out[0]["category"] == "정기공시"
+
+
+def test_classify_disclosures_other_categories():
+    cases = [
+        ("자기주식취득결정", "자기주식", "high"),
+        ("단일판매·공급계약체결", "계약·수주", "high"),
+        ("현금배당결정", "배당", "high"),
+        ("최대주주등소유주식변동신고서", "지분변동", "normal"),
+        ("기타시장안내", "기타", "normal"),
+    ]
+    for title, expect_cat, expect_imp in cases:
+        out = classify_disclosures([{"title": title, "rcept_no": "9"}])
+        assert out[0]["category"] == expect_cat, title
+        assert out[0]["importance"] == expect_imp, title
+
+
+def test_recent_disclosures_includes_classification_fields():
+    c = DartClient(reader=FakeReader())
+    ds = c.recent_disclosures("00126380")
+    assert all("importance" in d and "category" in d and "url" in d for d in ds)

@@ -1,4 +1,4 @@
-from app import config, metrics, report
+from app import company, config, financials, metrics, report
 
 
 def _emit(cb, step, cur, total):
@@ -20,7 +20,55 @@ def _metrics_for(stock_code, name, market_cap, op_3m, krx_per,
     return {"name": name, "stock_code": stock_code, "market_cap": market_cap,
             "op_3m": op_3m, "op_annualized": opa, "per_op": per, "per_status": per_status,
             "krx_per": krx_per, "year": year, "reprt_key": reprt_key, "fs_div": fs_div,
-            "is_target": is_target}
+            "is_target": is_target,
+            # PER 산정방식 3종 — per_op(위)는 "최근분기×4 연환산"과 동일값이며 하위호환을 위해
+            # 그대로 남긴다. per_op_fwd는 그 별칭. TTM(최근 4개 이산분기 합산) 기반은 아래 두 개.
+            # peer는 지연시간 문제로 기본은 forward만 채운다(pipeline._apply_ttm_per 참고).
+            "per_op_fwd": per, "per_op_ttm": None, "per_net_ttm": None, "ttm_complete": False}
+
+
+def _build_deepdive(dart, krx, corp_code, target_code, basis):
+    """회사개요/손익계산서/마진/5개년추이. 각 조각은 독립적으로 try/except로 감싸
+    하나가 실패해도(개요 API 다운, 특정 연도 재무제표 결측 등) 나머지와 핵심 PER/PEER
+    결과에는 영향이 없도록 한다."""
+    deepdive = {"overview": None, "income_statement": None, "margins": None,
+                "trend": [], "basis": basis}
+    try:
+        deepdive["overview"] = company.overview(dart, krx, corp_code, target_code)
+    except Exception:
+        deepdive["overview"] = None
+
+    year, reprt_key, fs_div = basis.get("year"), basis.get("reprt_key"), basis.get("fs_div") or "CFS"
+    if year and reprt_key:
+        try:
+            is_df = dart.finstate(corp_code, year, reprt_key, fs_div=fs_div)
+            is_data = financials.income_statement(is_df, reprt_key) if is_df is not None else None
+            deepdive["income_statement"] = is_data
+            deepdive["margins"] = financials.margins(is_data) if is_data else None
+        except Exception:
+            deepdive["income_statement"] = None
+            deepdive["margins"] = None
+        try:
+            deepdive["trend"] = financials.five_year_trend(dart, corp_code, year, reprt_key, fs_div=fs_div)
+        except Exception:
+            deepdive["trend"] = []
+    return deepdive
+
+
+def _apply_ttm_per(row, dart, corp_code, market_cap, fs_div):
+    """TTM(최근 4개 이산분기 합산) 기준 영업이익 PER·순이익 PER을 row에 채운다.
+    실패해도 row는 이미 forward PER을 갖고 있으므로 조용히 넘어간다."""
+    try:
+        ttm_op = financials.ttm_operating_income(dart, corp_code, fs_div=fs_div or "CFS")
+        row["ttm_complete"] = ttm_op.get("complete", False)
+        row["per_op_ttm"] = metrics.per_op(market_cap, ttm_op.get("op_ttm"))
+    except Exception:
+        pass
+    try:
+        net_ttm = financials.ttm_net_income(dart, corp_code, fs_div=fs_div or "CFS")
+        row["per_net_ttm"] = metrics.per_op(market_cap, net_ttm)
+    except Exception:
+        pass
 
 
 def _resolve_verified_peer(dart, stock_code):
@@ -39,7 +87,7 @@ def _resolve_verified_peer(dart, stock_code):
 
 
 def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None):
-    TOTAL = 6
+    TOTAL = 7
     # 1) 종목 해석
     _emit(progress_cb, "종목 해석", 1, TOTAL)
     info = dart.resolve_corp(name)
@@ -95,12 +143,23 @@ def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None)
     peer_per_count = sum(1 for r in peer_rows if r["per_op"] is not None)
     stats["insufficient_peers"] = peer_per_count < 2
 
-    # 5) 타깃 공시(+심층은 후속 확장 지점)
-    _emit(progress_cb, "공시 수집", 5, TOTAL)
+    # 5) 재무제표 심층분석(회사개요/손익계산서/마진/5개년추이) + TTM PER(영업이익·순이익)
+    # peer까지 TTM(분기당 최대 4~8회 finstate 호출)을 계산하면 peer 5개 기준 지연이
+    # 크게 늘어나(실측: 아래 참고) 응답시간이 나빠지므로, TTM은 타깃에게만 적용하고
+    # peer는 기존 forward PER(최근분기×4 연환산)만 유지한다. 프런트가 방식 차이를
+    # 알 수 있도록 all_rows 전체에 per_op_fwd/per_op_ttm/per_net_ttm/ttm_complete
+    # 키는 채우되(타깃 외에는 ttm 쪽이 None), 최상위 결과에도 명시적 플래그를 남긴다.
+    _emit(progress_cb, "재무제표 분석", 5, TOTAL)
+    basis = {"year": tq.get("year"), "reprt_key": tq.get("reprt_key"), "fs_div": tq.get("fs_div")}
+    deepdive = _build_deepdive(dart, krx, info["corp_code"], target_code, basis)
+    _apply_ttm_per(target_row, dart, info["corp_code"], target_mc, basis.get("fs_div"))
+
+    # 6) 타깃 공시(중요도/카테고리 분류 포함)
+    _emit(progress_cb, "공시 수집", 6, TOTAL)
     disc = dart.recent_disclosures(info["corp_code"])
 
-    # 6) 뉴스·블로그 투자포인트/리스크 요약(주입 없거나 실패해도 분석 자체는 성공)
-    _emit(progress_cb, "뉴스·요약", 6, TOTAL)
+    # 7) 뉴스·블로그 투자포인트/리스크 요약(주입 없거나 실패해도 분석 자체는 성공)
+    _emit(progress_cb, "뉴스·요약", 7, TOTAL)
     ins = {"status": "disabled", "investment_points": [], "risks": [],
            "overall": "", "sources": [], "as_of": None, "window_days": config.NEWS_WINDOW_DAYS}
     if news is not None and insights_fn is not None:
@@ -117,4 +176,8 @@ def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None)
             pass
 
     all_rows.sort(key=lambda r: (r["per_op"] is None, r["per_op"] if r["per_op"] is not None else 0))
-    return report.build_result(target_row, all_rows, stats, disc, deepdive=None, insights=ins)
+    res = report.build_result(target_row, all_rows, stats, disc, deepdive=deepdive, insights=ins)
+    # peer는 지연시간 문제로 TTM PER을 계산하지 않는다(위 5단계 주석 참고) — 프런트가
+    # per_op_ttm 결측을 "데이터 없음"이 아니라 "미계산(방식 차이)"으로 표시할 수 있게 플래그.
+    res["peer_ttm_computed"] = False
+    return res

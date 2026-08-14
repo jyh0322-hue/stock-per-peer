@@ -12,7 +12,8 @@ from app import cache, config
 # - ListingDate 등 JSON 직렬화 불가(Timestamp) 컬럼을 애초에 배제하고
 # - 캐시 파일 크기도 줄인다.
 _MARCAP_COLS = ["Code", "Symbol", "Name", "Marcap", "시가총액"]
-_LISTING_COLS = ["Code", "Symbol", "Name", "Market", "Sector", "Industry"]
+_LISTING_COLS = ["Code", "Symbol", "Name", "Market", "Sector", "Industry",
+                  "Products", "Representative", "HomePage", "Region", "ListingDate"]
 
 # 프로세스 내에서 KrxClient()가 여러 번 생성돼도(요청마다 새 인스턴스) 재파싱하지
 # 않도록 모듈 레벨에 DataFrame 자체를 메모이즈한다. cache.memoize는 day_key +
@@ -38,6 +39,11 @@ def _fetch_marcap_records():
 def _fetch_listing_records():
     import FinanceDataReader as fdr
     df = _trim(fdr.StockListing("KRX-DESC"), _LISTING_COLS)
+    if "ListingDate" in df.columns:
+        # pandas Timestamp -> "YYYY-MM-DD" 문자열 (JSON 캐시 직렬화 + API 응답 직렬화 대비)
+        df = df.copy()
+        df["ListingDate"] = df["ListingDate"].apply(
+            lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else None)
     return df.to_dict("records")
 
 
@@ -159,6 +165,38 @@ class KrxClient:
             if not _is_missing(val):
                 return str(val)
         return None
+
+    def profile(self, stock_code):
+        """회사개요(app.company.overview)용 상장정보. KRX-DESC 캐시된 _listing을 그대로
+        재사용하며 새로 fetch하지 않는다. 못 찾으면 None(호출부가 완만히 저하)."""
+        self._ensure()
+        if self._listing is None:
+            return None
+        code_col = _col(self._listing, "Code", "Symbol")
+        if code_col is None:
+            return None
+        row_df = self._listing[self._listing[code_col] == stock_code]
+        if len(row_df) == 0:
+            return None
+        row = row_df.iloc[0]
+
+        def g(col_name):
+            c = _col(self._listing, col_name)
+            if c is None:
+                return None
+            val = row[c]
+            return None if _is_missing(val) else str(val)
+
+        return {
+            "market": g("Market"),
+            "sector": self._resolve_sector(row),
+            "industry": g("Industry"),
+            "products": g("Products"),
+            "representative": g("Representative"),
+            "homepage": g("HomePage"),
+            "region": g("Region"),
+            "listing_date": g("ListingDate"),
+        }
 
     def peers_in_sector(self, sector, exclude_code, top=config.PEER_COUNT):
         self._ensure()

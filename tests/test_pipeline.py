@@ -66,12 +66,16 @@ def test_run_analysis_progress_and_per():
     # 타깃 PER = 시총3000 / (50*4=200) = 15.0
     assert res["target"]["per_op"] == 15.0
     assert res["stats"]["count"] >= 2
-    assert len(steps) == 6 and steps[-1][1] == 6
+    assert len(steps) == 7 and steps[-1][1] == 7
     # news/insights_fn 미주입 시에도 분석은 성공하고, insights는 비활성 상태로 채워짐
     assert res["insights"]["status"] == "disabled"
+    # 심층분석은 FakeDart/FakeKrx가 finstate/company_info/profile을 제공하지 않아도
+    # (각 조각이 try/except로 감싸여) 예외 없이 deepdive 키 자체는 채워져야 한다.
+    assert "deepdive" in res and res["deepdive"] is not None
+    assert set(res["deepdive"].keys()) == {"overview", "income_statement", "margins", "trend", "basis"}
 
 
-def test_run_analysis_includes_insights_and_6_steps():
+def test_run_analysis_includes_insights_and_7_steps():
     steps = []
 
     class FakeNews:
@@ -87,7 +91,7 @@ def test_run_analysis_includes_insights_and_6_steps():
     res = pipeline.run_analysis("브이티", dart, krx, news=FakeNews(), insights_fn=fake_insights,
                                 progress_cb=lambda s, c, t: steps.append((s, c, t)))
     assert res["insights"]["status"] == "ok"
-    assert steps[-1][2] == 6 and steps[-1][1] == 6
+    assert steps[-1][2] == 7 and steps[-1][1] == 7
 
 
 def test_run_analysis_survives_news_failure():

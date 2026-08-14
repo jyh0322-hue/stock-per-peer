@@ -16,6 +16,19 @@ REPRT = {"Q1": "11013", "HALF": "11012", "Q3": "11014", "ANNUAL": "11011"}
 REPRT_ORDER = ["ANNUAL", "Q3", "HALF", "Q1"]  # 최신성 판단용(누적 범위 큰 순)
 OP_ACCOUNT_IDS = ["dart_OperatingIncomeLoss", "ifrs-full_ProfitLossFromOperatingActivities"]
 REVENUE_ACCOUNT_IDS = ["ifrs-full_Revenue"]
+NET_INCOME_ACCOUNT_IDS = ["ifrs-full_ProfitLoss"]
+# 손익계산서 주요 7개 항목 — account_id 기반 매칭(계정명은 회사/연도별로 다를 수 있음).
+# stock_report.py(레거시 단독 스크립트)의 IS_ITEMS를 그대로 이식(실데이터 검증됨).
+IS_ITEMS = [
+    ("매출액", ["ifrs-full_Revenue"]),
+    ("매출원가", ["ifrs-full_CostOfSales"]),
+    ("매출총이익", ["ifrs-full_GrossProfit"]),
+    ("판매관리비", ["dart_TotalSellingGeneralAdministrativeExpenses",
+                  "ifrs-full_SellingGeneralAndAdministrativeExpense"]),
+    ("영업이익", OP_ACCOUNT_IDS),
+    ("세전이익", ["ifrs-full_ProfitLossBeforeTax"]),
+    ("당기순이익", NET_INCOME_ACCOUNT_IDS),
+]
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", ".cache")
 FINSTATE_TTL = 60 * 60 * 24 * 30  # 30일
 FINSTATE_EMPTY_TTL = 60 * 60  # 미제출/빈 결과는 1시간만 캐시(공시 게시 후 곧 반영)
