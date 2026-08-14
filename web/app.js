@@ -6,7 +6,28 @@ const STEP_TOTAL = STEP_LABELS.length;
 const fmt = (v, dp = 1) => (typeof v === "number" && !Number.isNaN(v)
   ? v.toLocaleString("ko-KR", { minimumFractionDigits: dp, maximumFractionDigits: dp })
   : "-");
-const per = (v) => (typeof v === "number" && !Number.isNaN(v) ? fmt(v, 1) : "N/A(적자)");
+
+// PER(영업이익 기준) 셀: 결측 사유(per_status)에 따라 "적자"와 "데이터 없음"을 구분해서
+// 표기한다. per_status가 없는 값(적자 여부를 판단할 근거가 없는 경우)은 항상 "데이터 없음".
+const REPRT_LABEL = { Q1: "1분기", HALF: "반기", Q3: "3분기", ANNUAL: "4분기" };
+
+function perCell(v, status) {
+  if (typeof v === "number" && !Number.isNaN(v)) return fmt(v, 1);
+  return status === "loss" ? "N/A(적자)" : "데이터 없음";
+}
+
+// KRX PER 컬럼은 영업이익 데이터를 근거로 하지 않으므로(단순 시세 교차검증용) "적자"라고
+// 단정할 근거가 없다 — 값이 없으면 항상 "데이터 없음"으로만 표기한다.
+function krxPerCell(v) {
+  return (typeof v === "number" && !Number.isNaN(v)) ? fmt(v, 1) : "데이터 없음";
+}
+
+function basisLabel(row) {
+  if (!row || !row.year || !row.reprt_key) return "-";
+  const q = REPRT_LABEL[row.reprt_key] || row.reprt_key;
+  const suffix = row.fs_div === "OFS" ? "(별도)" : "";
+  return row.year + " " + q + suffix;
+}
 
 function showView(name) {
   ["search", "progress", "result"].forEach((v) => {
@@ -118,14 +139,20 @@ async function poll(jobId) {
   setTimeout(() => poll(jobId), 1500);
 }
 
-function perBadgeClass(v, median) {
+function perBadgeClass(v, median, insufficientPeers) {
+  if (insufficientPeers) return "";
   if (typeof v !== "number" || typeof median !== "number") return "";
   if (v < median) return "badge-under";
   if (v > median * 1.3) return "badge-over";
   return "";
 }
 
-function perNote(v, median) {
+function perNote(v, median, insufficientPeers) {
+  // 비교 가능한(PER이 계산된) peer가 2개 미만이면 "업종 중앙값"은 사실상 타깃 자신과의
+  // 비교로 퇴화한다 — 저평가/고평가 판정 대신 데이터 부족을 알린다.
+  if (insufficientPeers) {
+    return '<div class="note muted">비교 가능한 동종업체 부족</div>';
+  }
   if (typeof v !== "number" || typeof median !== "number") {
     return '<div class="note muted">업종 비교 데이터 부족</div>';
   }
@@ -140,14 +167,15 @@ function render(res) {
 
   const rows = (res.peers || []).map((p) => {
     const cls = p.is_target ? ' class="target"' : "";
-    const badge = p.is_target ? "" : perBadgeClass(p.per_op, s.median);
+    const badge = p.is_target ? "" : perBadgeClass(p.per_op, s.median, s.insufficient_peers);
     return (
       "<tr" + cls + "><td>" + p.name + ' <span class="code">' + (p.stock_code || "") + "</span></td>" +
       '<td class="num">' + fmt(p.market_cap, 0) + "</td>" +
       '<td class="num">' + fmt(p.op_3m, 0) + "</td>" +
       '<td class="num">' + fmt(p.op_annualized, 0) + "</td>" +
-      '<td class="num ' + badge + '">' + per(p.per_op) + "</td>" +
-      '<td class="num">' + per(p.krx_per) + "</td></tr>"
+      '<td class="num ' + badge + '">' + perCell(p.per_op, p.per_status) + "</td>" +
+      '<td class="num">' + krxPerCell(p.krx_per) + "</td>" +
+      '<td class="num basis">' + basisLabel(p) + "</td></tr>"
     );
   }).join("");
 
@@ -160,7 +188,8 @@ function render(res) {
     );
   }).join("");
 
-  const rankLine = (s.rank && s.total) ? (s.rank + "<small> / " + s.total + "</small>") : "-";
+  const rankLine = (s.rank && s.total && !s.insufficient_peers)
+    ? (s.rank + "<small> / " + s.total + "</small>") : "-";
 
   const insights = renderInsights(res.insights);
 
@@ -168,16 +197,18 @@ function render(res) {
     '<div class="result-head"><h1>' + t.name + '</h1><span class="code">(' + (t.stock_code || "") + ")</span></div>" +
     '<div class="kpis">' +
       '<div class="kpi"><div class="lab">시가총액</div><div class="val">' + fmt(t.market_cap, 0) + '<small> 억</small></div></div>' +
-      '<div class="kpi"><div class="lab">최근 분기 영업이익</div><div class="val">' + fmt(t.op_3m, 0) + '<small> 억</small></div></div>' +
-      '<div class="kpi hl"><div class="lab">PER (영업이익 기준·연환산)</div><div class="val">' + per(t.per_op) + '<small> 배</small></div>' +
-        perNote(t.per_op, s.median) + '</div>' +
+      '<div class="kpi"><div class="lab">최근 분기 영업이익</div><div class="val">' + fmt(t.op_3m, 0) + '<small> 억</small></div>' +
+        '<div class="note muted">기준 ' + basisLabel(t) + '</div></div>' +
+      '<div class="kpi hl"><div class="lab">PER (영업이익 기준·연환산)</div><div class="val">' + perCell(t.per_op, t.per_status) + '<small> 배</small></div>' +
+        perNote(t.per_op, s.median, s.insufficient_peers) + '</div>' +
       '<div class="kpi"><div class="lab">업종 내 순위</div><div class="val">' + rankLine + '</div>' +
-        '<div class="note muted">PER 낮을수록 상위</div></div>' +
+        '<div class="note muted">' + (s.insufficient_peers ? "비교 가능한 동종업체 부족" : "PER 낮을수록 상위") + '</div></div>' +
     '</div>' +
     '<h2>업종 PEER 비교 <span class="hint">시총 상위 5 + 타깃</span></h2>' +
     '<div class="card table-scroll"><table><thead><tr>' +
       '<th>종목</th><th class="num">시총(억)</th><th class="num">최근분기 영업익(억)</th>' +
       '<th class="num">연환산(억)</th><th class="num">PER(영업이익)</th><th class="num">KRX PER</th>' +
+      '<th class="num">기준분기</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
     '<h2>PER 비교 차트</h2>' +
     '<div class="card chart-card"><img class="chart" src="data:image/png;base64,' + res.chart_per_b64 + '"></div>' +
@@ -185,7 +216,8 @@ function render(res) {
     '<ul class="disc">' + (disc || "<li>최근 공시 없음</li>") + '</ul>' +
     insights +
     '<div class="disclaimer">※ OpenDART·KRX 데이터를 자동 집계한 자료로, 투자자문·매매판단을 제공하지 않습니다.<br>' +
-    'PER(영업이익 기준, 연환산) = 시가총액 ÷ (최근 분기 영업이익 × 4). 영업이익 적자 종목은 N/A(적자)로 표기됩니다.</div>' +
+    'PER(영업이익 기준, 연환산) = 시가총액 ÷ (최근 분기 영업이익 × 4). 영업이익 적자 종목은 N/A(적자), ' +
+    '실적을 확인하지 못한 경우는 데이터 없음으로 표기됩니다.</div>' +
     '<div style="margin-top:24px"><button class="btn" id="again" type="button">새로 검색</button></div>';
 
   $("#again").addEventListener("click", () => {

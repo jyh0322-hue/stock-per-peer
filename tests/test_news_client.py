@@ -218,3 +218,46 @@ def test_fetch_recent_uses_naver_fallback_when_google_has_few_items():
     items = client.fetch_recent("브이티", "브이티", days=30, now=now)
     assert calls["naver"] is True
     assert any(i["title"] == "브이티 단독 기사 - 신문사" for i in items)
+
+
+# ---- I12: DART 법인명과 KRX 상장명이 다를 때 KRX 이름으로도 매칭되어야 함 -----
+
+def test_fetch_recent_matches_on_krx_name_when_dart_legal_name_differs():
+    now = datetime(2026, 8, 14, tzinfo=KST)
+    # 헤드라인은 KRX 상장명("브이티")을 쓰지만, DART 법인 정식명칭은 전혀 다르다
+    # ("주식회사" 접두/상이한 표기) — 종전 로직(company만으로 매칭)이면 걸러졌을 기사.
+    rss = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<item>
+<title>브이티 실적 호조 - 한국경제</title>
+<link>http://n1</link>
+<pubDate>Mon, 11 Aug 2026 09:30:00 GMT</pubDate>
+<description>영업익 증가</description>
+<source>한국경제</source>
+</item>
+</channel></rss>
+"""
+    fetch = _fake_fetch_google_only(rss)
+    client = nc.NewsClient(fetch=fetch)
+    items = client.fetch_recent("주식회사브이티코스메틱스", "브이티", days=30, now=now)
+
+    assert len(items) == 1
+    assert items[0]["title"] == "브이티 실적 호조 - 한국경제"
+
+
+def test_fetch_recent_queries_with_krx_name_when_available():
+    # 검색 질의어 자체도 (DART 법인명이 아니라) KRX 상장명을 우선 사용해야 한다 —
+    # 뉴스 헤드라인이 실제로 쓰는 표기라 검색 적중률이 높다.
+    from urllib.parse import quote
+
+    seen = {}
+
+    def fetch(url):
+        seen["url"] = url
+        return ""
+
+    client = nc.NewsClient(fetch=fetch)
+    client.fetch_recent("주식회사브이티코스메틱스", "브이티", days=30,
+                        now=datetime(2026, 8, 14, tzinfo=KST))
+    assert quote("브이티") in seen["url"]
+    assert quote("주식회사브이티코스메틱스") not in seen["url"]

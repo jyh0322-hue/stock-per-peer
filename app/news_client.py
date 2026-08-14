@@ -44,6 +44,18 @@ def _norm(s):
     return re.sub(r"\s+", "", s or "")
 
 
+_LEGAL_ENTITY_PREFIXES = ("주식회사", "(주)")
+
+
+def _clean_company_name(name):
+    """DART 법인 정식명칭에서 "(주)"/"주식회사"를 제거해 매칭용 키를 만든다.
+    뉴스 헤드라인은 거의 항상 법인 정식명칭이 아니라 이 형태로 회사를 지칭한다."""
+    out = name or ""
+    for token in _LEGAL_ENTITY_PREFIXES:
+        out = out.replace(token, "")
+    return out.strip()
+
+
 def parse_rss_date(pubdate):
     """RFC1123 형식(예: 'Mon, 11 Aug 2026 09:30:00 GMT') 파싱. 실패 시 None."""
     if not pubdate:
@@ -252,7 +264,9 @@ class NewsClient:
 
     def fetch_recent(self, company, stock_name, days=30, now=None):
         now = now or datetime.now(KST)
-        query = company or stock_name
+        # 뉴스 헤드라인은 DART 법인 정식명칭이 아니라 KRX 상장명으로 회사를 지칭하므로,
+        # 검색 질의어는 stock_name(있으면)을 우선한다.
+        query = stock_name or company
         if not query:
             return []
 
@@ -273,10 +287,14 @@ class NewsClient:
             except Exception:
                 pass
 
-        key = _norm(company or stock_name)
+        # 관련성 판정은 두 이름(법인 정식명칭에서 "(주)"/"주식회사"를 뗀 키, KRX 상장명 키)
+        # 중 하나만 맞아도 통과시킨다 — 둘 중 하나가 늘 실제 매칭 대상과 어긋나기 쉽다.
+        company_key = _norm(_clean_company_name(company))
+        stock_key = _norm(stock_name)
         relevant = [
             it for it in raw
-            if key and (key in _norm(it.get("title")) or key in _norm(it.get("snippet")))
+            if (company_key and (company_key in _norm(it.get("title")) or company_key in _norm(it.get("snippet"))))
+            or (stock_key and (stock_key in _norm(it.get("title")) or stock_key in _norm(it.get("snippet"))))
         ]
 
         recent = filter_recent(relevant, days, now)

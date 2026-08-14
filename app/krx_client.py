@@ -101,6 +101,23 @@ class KrxClient:
             return None
         return float(val) / config.EOK
 
+    def name_of(self, stock_code):
+        """KRX 상장명(뉴스 검색·매칭에 쓰는 실제 종목명). DART corp_name은 법인 정식명칭
+        ("(주)"/"주식회사" 포함 등)이라 뉴스 헤드라인과 표기가 달라 검색/필터가 늘 빗나가므로,
+        뉴스 조회에는 이 이름을 우선 사용한다."""
+        self._ensure()
+        if self._listing is None:
+            return None
+        code_col = _col(self._listing, "Code", "Symbol")
+        name_col = _col(self._listing, "Name")
+        if code_col is None or name_col is None:
+            return None
+        row = self._listing[self._listing[code_col] == stock_code]
+        if len(row) == 0:
+            return None
+        val = row.iloc[0][name_col]
+        return None if _is_missing(val) else str(val)
+
     def krx_per(self, stock_code):
         # pykrx fundamental은 이 환경에서 불안정/불가(LOGOUT 등) — best-effort만 하고
         # 어떤 실패든 절대 raise 하지 않는다. 이미 주입된 self._fund가 있으면 그것을 사용.

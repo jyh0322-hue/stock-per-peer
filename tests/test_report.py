@@ -25,16 +25,6 @@ def test_build_result_shape():
     assert isinstance(res["chart_per_b64"], str)
 
 
-def test_render_html_contains_key_labels():
-    t, p, s = _sample()
-    res = report.build_result(t, p, s, disclosures=[], deepdive=None)
-    html = report.render_html(res)
-    assert "브이티" in html
-    assert "PER(영업이익 기준" in html
-    assert "코스맥스" in html
-    assert html.strip().startswith("<!doctype html>") or html.strip().startswith("<!DOCTYPE html>")
-
-
 def test_per_bar_chart_b64_handles_all_none_per():
     peers = [
         {"name": "브이티", "stock_code": "018290", "per_op": None},

@@ -60,6 +60,14 @@ def test_krx_per():
     assert make_client().krx_per("000660") == 9.0
 
 
+def test_name_of_returns_krx_listing_name():
+    assert make_client().name_of("035420") == "NAVER"
+
+
+def test_name_of_returns_none_when_not_found():
+    assert make_client().name_of("999999") is None
+
+
 def test_krx_per_returns_none_when_fundamentals_source_raises(monkeypatch):
     # pykrx가 이 환경에서 깨져 있는 상황(LOGOUT/IndexError 등)을 시뮬레이션.
     # _fund를 주입하지 않은 상태에서 pykrx 호출이 예외를 던지면 krx_per는 raise하지 않고 None을 반환해야 한다.
