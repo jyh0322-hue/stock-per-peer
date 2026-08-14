@@ -1,0 +1,18 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# 저장소에 이 파일이 있으면 Render가 설정을 자동으로 읽어 서비스를 만든다.
+# API 키는 여기 적지 않는다(시크릿). 대시보드 Environment 탭에서 등록한다.
+services:
+  - type: web
+    name: stock-per-peer
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free              # 512MB RAM — 실측 피크 208MB로 여유 있음
+    region: singapore       # 한국에서 가장 가까운 무료 리전
+    healthCheckPath: /
+    envVars:
+      - key: OPENDART_API_KEY
+        sync: false         # 대시보드에서 직접 입력(필수)
+      - key: ANTHROPIC_API_KEY
+        sync: false         # 뉴스 요약용(선택) — 없으면 해당 섹션만 비활성
+      - key: MPLCONFIGDIR
+        value: /home/user/.cache/matplotlib   # 컨테이너 uid 1000이 쓸 수 있는 경로
