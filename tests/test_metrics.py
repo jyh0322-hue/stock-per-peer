@@ -38,3 +38,13 @@ def test_rank_within_lower_is_better():
 def test_rank_within_none_target():
     r = metrics.rank_within(None, [10.0, 20.0])
     assert r["rank"] is None
+
+
+def test_margin_normal():
+    assert metrics.margin(20.0, 200.0) == 10.0
+
+
+def test_margin_zero_or_none_denom_returns_none():
+    assert metrics.margin(20.0, 0) is None
+    assert metrics.margin(20.0, None) is None
+    assert metrics.margin(None, 200.0) is None
