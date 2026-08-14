@@ -1,4 +1,4 @@
-from app import metrics, report
+from app import config, metrics, report
 
 
 def _emit(cb, step, cur, total):
@@ -14,8 +14,8 @@ def _metrics_for(stock_code, name, market_cap, op_3m, krx_per, is_target=False):
             "krx_per": krx_per, "is_target": is_target}
 
 
-def run_analysis(name, dart, krx, progress_cb=None):
-    TOTAL = 5
+def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None):
+    TOTAL = 6
     # 1) 종목 해석
     _emit(progress_cb, "종목 해석", 1, TOTAL)
     info = dart.resolve_corp(name)
@@ -52,8 +52,20 @@ def run_analysis(name, dart, krx, progress_cb=None):
     stats.update(rank)
 
     # 5) 타깃 공시(+심층은 후속 확장 지점)
-    _emit(progress_cb, "공시·결과 조립", 5, TOTAL)
+    _emit(progress_cb, "공시 수집", 5, TOTAL)
     disc = dart.recent_disclosures(info["corp_code"])
 
+    # 6) 뉴스·블로그 투자포인트/리스크 요약(주입 없거나 실패해도 분석 자체는 성공)
+    _emit(progress_cb, "뉴스·요약", 6, TOTAL)
+    ins = {"status": "disabled", "investment_points": [], "risks": [],
+           "overall": "", "sources": [], "as_of": None, "window_days": config.NEWS_WINDOW_DAYS}
+    if news is not None and insights_fn is not None:
+        try:
+            items = news.fetch_recent(info["corp_name"], info["corp_name"],
+                                      days=config.NEWS_WINDOW_DAYS)
+            ins = insights_fn(items, info["corp_name"])
+        except Exception:
+            pass
+
     all_rows.sort(key=lambda r: (r["per_op"] is None, r["per_op"] if r["per_op"] is not None else 0))
-    return report.build_result(target_row, all_rows, stats, disc, deepdive=None)
+    return report.build_result(target_row, all_rows, stats, disc, deepdive=None, insights=ins)

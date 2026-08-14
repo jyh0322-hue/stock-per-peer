@@ -50,13 +50,14 @@ def per_bar_chart_b64(peers, target_code, median):
     return _fig_b64(fig)
 
 
-def build_result(target, peers, stats, disclosures, deepdive):
+def build_result(target, peers, stats, disclosures, deepdive, insights=None):
     return {
         "target": target,
         "peers": peers,
         "stats": stats,
         "disclosures": disclosures or [],
         "deepdive": deepdive,
+        "insights": insights or {"status": "disabled"},
         "chart_per_b64": per_bar_chart_b64(peers, target["stock_code"], stats.get("median")),
     }
 
@@ -69,6 +70,51 @@ def _fmt(v, dp=1):
 
 def _per_cell(v):
     return format(v, ",.1f") if isinstance(v, (int, float)) else "N/A(적자)"
+
+
+def _points_html(points):
+    out = ""
+    for p in points or []:
+        sup = "".join("[%d]" % s["n"] for s in p.get("sources") or [])
+        sup_html = ' <sup class="src-ref">%s</sup>' % sup if sup else ""
+        out += "<li>%s%s</li>\n" % (p.get("text", ""), sup_html)
+    return out
+
+
+def _sources_html(sources):
+    out = ""
+    for s in sources or []:
+        out += (
+            "[%d] %s · <i>%s</i> · %s · <a href='%s' target='_blank' rel='noopener'>%s</a><br>\n"
+            % (s.get("n"), s.get("title") or "", s.get("source") or "",
+               s.get("date") or "", s.get("url") or "#", s.get("url") or "")
+        )
+    return out
+
+
+def _insights_html(insights):
+    insights = insights or {"status": "disabled"}
+    status = insights.get("status")
+    if status != "ok":
+        notice = "최근 1개월 자료 없음" if status == "no_data" else "요약 비활성"
+        return (
+            "<h2>투자포인트 · 리스크</h2>"
+            "<div class='card ins-empty'>%s — 관련 최근 1개월 뉴스/블로그가 없거나 요약 기능이 비활성화되어 있습니다.</div>"
+            % notice
+        )
+    points_html = _points_html(insights.get("investment_points"))
+    risks_html = _points_html(insights.get("risks"))
+    sources_html = _sources_html(insights.get("sources"))
+    return (
+        "<h2>투자포인트 · 리스크 <span class='hint'>최근 1개월 뉴스·블로그 · Claude 요약</span></h2>"
+        "<div class='ins-grid'>"
+        "<div class='card ins-card ins-good'><div class='ins-title good'>투자포인트</div>"
+        "<ul>%s</ul></div>"
+        "<div class='card ins-card ins-warn'><div class='ins-title warn'>리스크</div>"
+        "<ul>%s</ul></div>"
+        "</div>"
+        "<div class='card src-list'><b>출처</b> (최근 1개월)<br>%s</div>"
+    ) % (points_html or "<li>해당 없음</li>", risks_html or "<li>해당 없음</li>", sources_html or "-")
 
 
 def render_html(result):
@@ -98,6 +144,20 @@ img.chart{{width:100%;border:1px solid #eee;border-radius:12px;margin:10px 0}}
 .tag{{font-size:.72rem;color:#fff;background:#5b8cff;border-radius:5px;padding:1px 6px}}
 .kpi{{display:inline-block;border:1px solid #e5e7eb;border-radius:12px;padding:12px 16px;margin:6px}}
 .disc{{margin-top:32px;font-size:.8rem;color:#6b7280;border-top:1px solid #eee;padding-top:12px}}
+h2{{font-size:1.08rem;margin:34px 0 12px}}
+h2 .hint{{font-size:.78rem;color:#6b7280;font-weight:500}}
+.card{{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px}}
+.ins-grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}
+.ins-card ul{{margin:0;padding-left:18px;font-size:.88rem}}
+.ins-card{{border-left:4px solid #ccc}}
+.ins-card.ins-good{{border-left-color:#059669}}
+.ins-card.ins-warn{{border-left-color:#d97706}}
+.ins-title{{font-weight:700;margin-bottom:8px}}
+.ins-title.good{{color:#059669}}
+.ins-title.warn{{color:#d97706}}
+.src-ref{{color:#5b8cff}}
+.src-list{{margin-top:12px;font-size:.82rem;color:#6b7280}}
+.ins-empty{{color:#6b7280;font-size:.88rem}}
 </style></head><body>
 <h1>{name} <small>({code})</small> PER·PEER 분석</h1>
 <div>
@@ -112,11 +172,14 @@ img.chart{{width:100%;border:1px solid #eee;border-radius:12px;margin:10px 0}}
 <th class="num">연환산(억)</th><th class="num">PER(영업이익)</th><th class="num">KRX PER</th></tr></thead>
 <tbody>{rows}</tbody></table>
 <h2>최근 공시</h2><ul>{disc}</ul>
+{insights_section}
 <div class="disc">※ OpenDART·KRX 데이터를 자동 집계한 자료로, 투자자문·매매판단을 제공하지 않습니다.
+투자포인트·리스크 요약은 최근 1개월 공개 뉴스·블로그(작성자·매체 견해)의 자동 정리이며 본 서비스의 투자 권유가 아닙니다.
 PER(영업이익 기준, 연환산) = 시가총액 ÷ (최근 분기 영업이익 × 4).</div>
 </body></html>""".format(
         name=t["name"], code=t.get("stock_code", ""),
         mcap=_fmt(t["market_cap"], 0), opa=_fmt(t.get("op_annualized"), 0),
         per=_per_cell(t.get("per_op")), med=_fmt(s.get("median")),
         rank=s.get("rank") or "-", total=s.get("count") or "-",
-        peern=len(result["peers"]), chart=result["chart_per_b64"], rows=rows, disc=disc)
+        peern=len(result["peers"]), chart=result["chart_per_b64"], rows=rows, disc=disc,
+        insights_section=_insights_html(result.get("insights")))

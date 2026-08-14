@@ -1,6 +1,7 @@
 const $ = (s) => document.querySelector(s);
 
-const STEP_LABELS = ["종목 해석", "업종·시총 조회", "PEER 실적 수집", "PER 계산", "공시·결과 조립"];
+const STEP_LABELS = ["종목 해석", "업종·시총 조회", "PEER 실적 수집", "PER 계산", "공시 수집", "뉴스·요약"];
+const STEP_TOTAL = STEP_LABELS.length;
 
 const fmt = (v, dp = 1) => (typeof v === "number" && !Number.isNaN(v)
   ? v.toLocaleString("ko-KR", { minimumFractionDigits: dp, maximumFractionDigits: dp })
@@ -42,7 +43,7 @@ document.querySelectorAll(".tagpill").forEach((tag) => {
 async function startAnalysis(name) {
   $("#q-echo").value = name;
   showView("progress");
-  setProgress({ step: "요청 전송", current: 0, total: 5, pct: 0 });
+  setProgress({ step: "요청 전송", current: 0, total: STEP_TOTAL, pct: 0 });
   try {
     const r = await fetch("/api/analyze", {
       method: "POST",
@@ -69,12 +70,12 @@ function setProgress(p) {
   const pct = p.pct || 0;
   $("#fill").style.width = pct + "%";
   $("#prog-caption").innerHTML = "<b>" + (p.step || "진행 중") + "</b> · " +
-    (p.current || 0) + "/" + (p.total || 5) + " 단계 (" + pct + "%)";
-  updateSteps(p.current || 0, p.total || 5);
+    (p.current || 0) + "/" + (p.total || STEP_TOTAL) + " 단계 (" + pct + "%)";
+  updateSteps(p.current || 0, p.total || STEP_TOTAL);
 }
 
 function updateSteps(current, total) {
-  for (let i = 1; i <= 5; i++) {
+  for (let i = 1; i <= STEP_TOTAL; i++) {
     const li = document.querySelector('#steps [data-step="' + i + '"]');
     if (!li) continue;
     const ic = li.querySelector(".ic");
@@ -161,7 +162,7 @@ function render(res) {
 
   const rankLine = (s.rank && s.total) ? (s.rank + "<small> / " + s.total + "</small>") : "-";
 
-  const insights = renderInsights(res.deepdive);
+  const insights = renderInsights(res.insights);
 
   $("#result").innerHTML =
     '<div class="result-head"><h1>' + t.name + '</h1><span class="code">(' + (t.stock_code || "") + ")</span></div>" +
@@ -202,19 +203,45 @@ function fmtDate(d) {
   return d || "-";
 }
 
-function renderInsights(deepdive) {
-  if (!deepdive) return "";
-  const points = (deepdive.points || []).map((x) => "<li>" + x + "</li>").join("");
-  const risks = (deepdive.risks || []).map((x) => "<li>" + x + "</li>").join("");
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function insightItem(p) {
+  const sup = (p.sources || []).map((s) => "[" + s.n + "]").join("");
+  const supHtml = sup ? ' <sup class="src-ref">' + escapeHtml(sup) + "</sup>" : "";
+  return "<li>" + escapeHtml(p.text) + supHtml + "</li>";
+}
+
+function renderInsights(insights) {
+  const heading = '<h2>투자포인트 · 리스크 <span class="hint">최근 1개월 뉴스·블로그 · Claude 요약</span></h2>';
+  if (!insights || insights.status !== "ok") {
+    const notice = insights && insights.status === "no_data" ? "최근 1개월 자료 없음" : "요약 비활성";
+    return (
+      heading +
+      '<div class="card ins-empty">' + notice +
+      " — 관련 최근 1개월 뉴스·블로그가 없거나 요약 기능이 비활성화되어 있습니다.</div>"
+    );
+  }
+
+  const points = (insights.investment_points || []).map(insightItem).join("");
+  const risks = (insights.risks || []).map(insightItem).join("");
+  const sources = (insights.sources || []).map((s) =>
+    "[" + s.n + "] " + escapeHtml(s.title) + " · <i>" + escapeHtml(s.source) + "</i> · " +
+    escapeHtml(s.date) + ' · <a href="' + escapeHtml(s.url || "#") + '" target="_blank" rel="noopener">' +
+    escapeHtml(s.url) + "</a>"
+  ).join("<br>");
+
   return (
-    '<h2>투자포인트 · 리스크 <span class="hint">최근 1개월 뉴스·블로그 요약</span></h2>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">' +
-      '<div class="card" style="padding:16px 18px;border-left:4px solid var(--good)">' +
-        '<div style="font-weight:700;color:var(--good);margin-bottom:8px">투자포인트</div>' +
-        '<ul style="margin:0;padding-left:18px;font-size:.9rem">' + points + '</ul></div>' +
-      '<div class="card" style="padding:16px 18px;border-left:4px solid var(--warn)">' +
-        '<div style="font-weight:700;color:var(--warn);margin-bottom:8px">리스크</div>' +
-        '<ul style="margin:0;padding-left:18px;font-size:.9rem">' + risks + '</ul></div>' +
-    '</div>'
+    heading +
+    '<div class="ins-grid">' +
+      '<div class="card ins-card ins-good"><div class="ins-title good">📈 투자포인트</div>' +
+        '<ul>' + (points || "<li>해당 없음</li>") + "</ul></div>" +
+      '<div class="card ins-card ins-warn"><div class="ins-title warn">⚠️ 리스크</div>' +
+        '<ul>' + (risks || "<li>해당 없음</li>") + "</ul></div>" +
+    "</div>" +
+    '<div class="card src-list"><b>출처</b> (최근 1개월)<br>' + (sources || "-") + "</div>"
   );
 }

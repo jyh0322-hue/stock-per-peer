@@ -30,8 +30,18 @@ class FakeKrx:
         return []
 
 
+class FakeNews:
+    def fetch_recent(self, company, stock_name, days=30, now=None):
+        return []
+
+
+def fake_insights_fn(items, company, as_of=None):
+    return {"status": "no_data", "investment_points": [], "risks": [],
+            "overall": "", "sources": [], "as_of": as_of, "window_days": 30}
+
+
 def setup_module(_):
-    main.CLIENT_FACTORY = lambda: (FakeDart(), FakeKrx())
+    main.CLIENT_FACTORY = lambda: (FakeDart(), FakeKrx(), FakeNews(), fake_insights_fn)
 
 
 def _wait_done(client, jid, timeout=5):

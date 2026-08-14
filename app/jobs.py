@@ -18,7 +18,7 @@ class JobStore:
         self._gc()
         jid = uuid.uuid4().hex[:12]
         self._jobs[jid] = {"state": "running", "progress": {"step": "대기", "current": 0,
-                           "total": 5, "pct": 0}, "result": None, "error": None, "_ts": time.time()}
+                           "total": 6, "pct": 0}, "result": None, "error": None, "_ts": time.time()}
         return jid
 
     def update(self, job_id, step, current, total):

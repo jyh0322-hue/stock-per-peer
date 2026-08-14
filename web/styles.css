@@ -87,6 +87,25 @@ img.chart{width:100%;display:block;border-radius:10px}
 .disc .type{font-size:.72rem;color:#fff;border-radius:6px;padding:2px 8px;flex:none}
 .type.reg{background:#64748b}.type.major{background:#d97706}.type.issue{background:#7c3aed}.type.etc{background:#94a3b8}
 
+/* 투자포인트·리스크 */
+.ins-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.ins-card{padding:16px 18px;border-left:4px solid var(--line)}
+.ins-card.ins-good{border-left-color:var(--good)}
+.ins-card.ins-warn{border-left-color:var(--warn)}
+.ins-card ul{margin:0;padding-left:18px;font-size:.9rem}
+.ins-card li{margin:4px 0}
+.ins-title{font-weight:700;margin-bottom:8px}
+.ins-title.good{color:var(--good)}
+.ins-title.warn{color:var(--warn)}
+.src-ref{color:var(--brand);font-size:.78em}
+.src-list{margin-top:12px;padding:12px 16px;font-size:.82rem;color:var(--muted)}
+.src-list a{color:var(--brand);word-break:break-all}
+.ins-empty{padding:14px 16px;color:var(--muted);font-size:.88rem}
+
+@media (max-width:720px){
+  .ins-grid{grid-template-columns:1fr}
+}
+
 .disclaimer{margin-top:34px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:.8rem}
 
 @media (max-width:720px){

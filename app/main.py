@@ -16,7 +16,9 @@ WEB_DIR = os.path.join(os.path.dirname(__file__), "..", "web")
 def _default_factory():
     from app.dart_client import DartClient
     from app.krx_client import KrxClient
-    return DartClient(), KrxClient()
+    from app.news_client import NewsClient
+    from app import insights
+    return DartClient(), KrxClient(), NewsClient(), insights.summarize
 
 
 CLIENT_FACTORY = _default_factory
@@ -28,9 +30,9 @@ class AnalyzeReq(BaseModel):
 
 def _run_job(job_id, name):
     try:
-        dart, krx = CLIENT_FACTORY()
+        dart, krx, news, insights_fn = CLIENT_FACTORY()
         result = pipeline.run_analysis(
-            name, dart, krx,
+            name, dart, krx, news=news, insights_fn=insights_fn,
             progress_cb=lambda s, c, t: STORE.update(job_id, s, c, t))
         STORE.finish(job_id, result)
     except Exception as e:  # noqa
@@ -41,7 +43,7 @@ def _run_job(job_id, name):
 async def analyze(req: AnalyzeReq):
     # 종목 존재만 먼저 동기 검증 -> 즉시 400 반환 가능
     try:
-        dart, _ = CLIENT_FACTORY()
+        dart = CLIENT_FACTORY()[0]
         dart.resolve_corp(req.name)
     except LookupError as e:
         raise HTTPException(status_code=400, detail=str(e))

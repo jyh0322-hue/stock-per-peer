@@ -47,4 +47,39 @@ def test_run_analysis_progress_and_per():
     # 타깃 PER = 시총3000 / (50*4=200) = 15.0
     assert res["target"]["per_op"] == 15.0
     assert res["stats"]["count"] >= 2
-    assert len(steps) == 5 and steps[-1][1] == 5
+    assert len(steps) == 6 and steps[-1][1] == 6
+    # news/insights_fn 미주입 시에도 분석은 성공하고, insights는 비활성 상태로 채워짐
+    assert res["insights"]["status"] == "disabled"
+
+
+def test_run_analysis_includes_insights_and_6_steps():
+    steps = []
+
+    class FakeNews:
+        def fetch_recent(self, company, stock_name, days=30, now=None):
+            return [{"title": "호재", "snippet": "매출↑", "url": "http://n1",
+                     "source": "뉴스", "published": None}]
+
+    def fake_insights(items, company, as_of=None):
+        return {"status": "ok", "investment_points": [{"text": "매출 성장", "sources": []}],
+                "risks": [], "overall": "중립", "sources": [], "as_of": as_of, "window_days": 30}
+
+    dart, krx = _make_fakes()
+    res = pipeline.run_analysis("브이티", dart, krx, news=FakeNews(), insights_fn=fake_insights,
+                                progress_cb=lambda s, c, t: steps.append((s, c, t)))
+    assert res["insights"]["status"] == "ok"
+    assert steps[-1][2] == 6 and steps[-1][1] == 6
+
+
+def test_run_analysis_survives_news_failure():
+    class BoomNews:
+        def fetch_recent(self, company, stock_name, days=30, now=None):
+            raise RuntimeError("network down")
+
+    def fake_insights(items, company, as_of=None):
+        raise AssertionError("should not be called if news fetch failed")
+
+    dart, krx = _make_fakes()
+    res = pipeline.run_analysis("브이티", dart, krx, news=BoomNews(), insights_fn=fake_insights)
+    assert res["insights"]["status"] == "disabled"
+    assert res["target"]["per_op"] == 15.0
