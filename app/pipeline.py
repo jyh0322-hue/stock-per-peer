@@ -246,6 +246,18 @@ def run_analysis(name, dart, krx, news=None, insights_fn=None, progress_cb=None)
     return res
 
 
+def _jsonable_item(item):
+    """뉴스 항목의 datetime(published)을 문자열 date로 바꿔 JSON 직렬화 가능하게 한다.
+    (정적 리포트 생성기가 결과를 json.dumps 하므로 datetime 이 남아있으면 실패한다.)"""
+    out = dict(item)
+    pub = out.pop("published", None)
+    if pub is not None and hasattr(pub, "strftime"):
+        out["date"] = pub.strftime("%Y-%m-%d")
+    elif "date" not in out:
+        out["date"] = ""
+    return out
+
+
 def _collect_industry(news, deepdive):
     """업종 동향 뉴스 수집(+가능하면 요약). news 클라이언트가 없거나 업종 정보가 없거나
     검색어를 뽑을 수 없으면(또는 어떤 단계든 예외가 나면) 빈 결과로 저하한다."""
@@ -260,7 +272,7 @@ def _collect_industry(news, deepdive):
             return industry
         items = news.fetch_industry(sector_val, days=config.NEWS_WINDOW_DAYS)
         industry["terms"] = terms
-        industry["items"] = items
+        industry["items"] = [_jsonable_item(i) for i in items]
         if items:
             try:
                 industry["summary"] = insights.summarize_industry(items, sector_val)
