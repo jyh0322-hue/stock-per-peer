@@ -1,8 +1,8 @@
 {
   "name": "에스케이하이닉스(주)",
   "stock_code": "000660",
-  "per_op": 5.465787686995578,
-  "per_status": "ok",
-  "generated_at": "2026-09-13 09:35:31",
+  "per_op": null,
+  "per_status": "nodata",
+  "generated_at": "2026-09-14 09:44:51",
   "sector": "반도체 제조업"
 }

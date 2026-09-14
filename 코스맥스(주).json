@@ -1,8 +1,8 @@
 {
   "name": "코스맥스(주)",
   "stock_code": "192820",
-  "per_op": 10.408997952406676,
-  "per_status": "ok",
-  "generated_at": "2026-09-13 09:32:36",
+  "per_op": null,
+  "per_status": "nodata",
+  "generated_at": "2026-09-14 09:39:33",
   "sector": "기타 화학제품 제조업"
 }
